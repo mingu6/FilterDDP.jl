@@ -1,4 +1,4 @@
-using InteriorPointDDP
+using FilterDDP
 using LinearAlgebra
 using Random
 using Plots

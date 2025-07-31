@@ -1,4 +1,4 @@
-module InteriorPointDDP
+module FilterDDP
 
 using LinearAlgebra 
 using Symbolics 

@@ -1,6 +1,10 @@
-# InteriorPointDDP.jl
+# FilterDDP.jl
 
-This repository contains a Julia package for solving constrained optimal control problems (OCPs) with our proposed IPDDP2 algorithm. The arXiv preprint is located at https://arxiv.org/abs/2504.08278.
+This repository contains a Julia package for solving constrained optimal control problems (OCPs) with our proposed FilterDDP algorithm. The arXiv preprint is located at https://arxiv.org/abs/2504.08278.
+
+FilterDDP is a Differential Dynamic Programming (DDP) algorithm for solving a general class of optimal control problems with stage-wise nonlinear equality constraints in addition to the discrete-time dynamics. A line-search filter approach is taken to handle these equality constraints. 
+
+Furthermore, an interior point formulation based on [Pavlov et al.](https://ieeexplore.ieee.org/document/9332234) is applied for handling inequality constraints. Local quadratic convergence of FilterDDP has been formally established. The global convergence result is coming soon! 
 
 OCPs must be expressed in the form
 ```math
@@ -20,7 +24,7 @@ where $\mathbf{x} = (x_1, \dots, x_{N})$ is the state trajectory and $\mathbf{u}
 
 ## Quick Start
 
-1. Change directory to the `ipddp2` directory, i.e., `cd /path/to/InteriorPointDDP.jl/experiments/ipddp2/`.
+1. Change directory to the `filterddp` directory, i.e., `cd /path/to/FilterDDP.jl/experiments/ipddp2/`.
 
 2. Open the Julia REPL with this project, i.e., `julia --project=../..`.
 
@@ -28,4 +32,4 @@ where $\mathbf{x} = (x_1, \dots, x_{N})$ is the state trajectory and $\mathbf{u}
 
 4. Run one of the experiments from the paper from the Julia REPL, e.g., `include("concar.jl")`.
 
-See `src/options.jl` for full list of solver options which can be modified to improve the convergence performance of IPDDP2.
+See `src/options.jl` for full list of solver options which can be modified to improve the convergence performance of FilterDDP.

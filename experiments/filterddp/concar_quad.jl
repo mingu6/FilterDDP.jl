@@ -1,4 +1,4 @@
-using InteriorPointDDP
+using FilterDDP
 using LinearAlgebra
 using Plots
 using Random
@@ -72,7 +72,7 @@ for seed = 1:n_ocp
         s = u[num_control .+ (1:num_obstacles)]    
         J = 0.0
         J += Δ * dot(u[1:2] .* [5.0, 1.0], u[1:2])
-        J += 50.0 * sum(s)
+        J += 1000.0 * s' * s
         return J
     end
     term_obj = (x, u) -> 200.0 * dot(x - xN, x - xN)
@@ -122,7 +122,6 @@ for seed = 1:n_ocp
         for xyr in xyr_obs
             plotCircle!(xyr[1], xyr[2], xyr[3])
         end
-        scatter!([xN[1]], [xN[2]], markershape=:star, color=:gold, markersize=10)
     end
     
     x1 = T[0.0; 0.0; π / 8; 0.0] + rand(T, num_state) .* T[0.0; 0.0; π / 4; 0.0]
@@ -153,7 +152,7 @@ for seed = 1:n_ocp
     push!(params, [F_lim; τ_lim; obs_1; obs_2; obs_3; obs_4; x1])
 end
 
-open("results/concar.txt", "w") do io
+open("results/concar_quad.txt", "w") do io
 	@printf(io, " seed  iterations  status     objective           primal        wall (ms)   solver(ms)  \n")
     for i = 1:n_ocp
         if benchmark
@@ -162,12 +161,5 @@ open("results/concar.txt", "w") do io
         else
             @printf(io, " %2s     %5s      %5s    %.8e    %.8e \n",  Int64(results[i][1]), Int64(results[i][2]), Int64(results[i][3]) == 0, results[i][4], results[i][5])
         end
-    end
-end
-
-# save parameters of each experiment for ProxDDP comparison
-open("params/concar.txt", "w") do io
-    for i = 1:n_ocp
-        println(io, join(string.(params[i]), " "))
     end
 end
