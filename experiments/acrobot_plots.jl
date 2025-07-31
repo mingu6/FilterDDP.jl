@@ -8,9 +8,9 @@ font_ = "Computer Modern"
 
 include("utils.jl")
 
-names = ["IPDDP2" "IPOPT" "IPOPT (B)" "ProxDDP"]
+names = ["FilterDDP" "IPOPT" "IPOPT (B)" "ProxDDP"]
 
-_, iters_ipd, _, objs_ipd, constrs_ipd, wall_ipd, _ = read_results("ipddp2/results/$problemclass.txt")
+_, iters_ipd, _, objs_ipd, constrs_ipd, wall_ipd, _ = read_results("FilterDDP/results/$problemclass.txt")
 _, iters_ipo, _, objs_ipo, constrs_ipo, wall_ipo, _ = read_results("ipopt/results/$problemclass.txt")
 _, iters_ipob, _, objs_ipob, constrs_ipob, wall_ipob, _ = read_results("ipopt/results/bfgs_$problemclass.txt")
 _, iters_al, _, objs_al, constrs_al, _, _ = read_results("proxddp/results/$problemclass.txt")

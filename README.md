@@ -24,7 +24,7 @@ where $\mathbf{x} = (x_1, \dots, x_{N})$ is the state trajectory and $\mathbf{u}
 
 ## Quick Start
 
-1. Change directory to the `filterddp` directory, i.e., `cd /path/to/FilterDDP.jl/experiments/ipddp2/`.
+1. Change directory to the `filterddp` directory, i.e., `cd /path/to/FilterDDP.jl/experiments/filterddp/`.
 
 2. Open the Julia REPL with this project, i.e., `julia --project=../..`.
 
