@@ -1,3 +1,5 @@
+using Debugger
+
 function backward_pass!(update_rule::UpdateRuleData{T}, problem::ProblemData{T}, data::SolverData{T},
             options::Options{T}; mode=:nominal, verbose::Bool=false) where T
     N = problem.horizon
@@ -122,8 +124,9 @@ function backward_pass!(update_rule::UpdateRuleData{T}, problem::ProblemData{T},
             end
 
             # setup linear system in backward pass
-            update_rule.lhs_tl[t] .= Ĥ[t]
+            update_rule.lhs_tl[t] .= Symmetric(Ĥ[t])
             update_rule.lhs_tr[t] .= transpose(cu[t])
+            update_rule.lhs_bl[t] .= cu[t] ## only for out of place
             fill!(update_rule.lhs_br[t], 0.0)
 
             α[t] .= Qû[t]
@@ -141,11 +144,14 @@ function backward_pass!(update_rule::UpdateRuleData{T}, problem::ProblemData{T},
                 end
             end
 
-            bk, data.status, reg, δ_c = inertia_correction!(update_rule.kkt_matrix_ws[t], update_rule.lhs[t], update_rule.D_cache[t],
-                        num_control, μ, reg, data.reg_last, options)
+            if num_control > 0
+                # bk, data.status, reg, δ_c = inertia_correction!(update_rule.kkt_matrix_ws[t], update_rule.lhs[t], update_rule.D_cache[t],
+                #             num_control, μ, reg, data.reg_last, options)
+                data.status, reg = inertia_correction_nullspace(update_rule.lhs_tl[t], cu[t], update_rule.parameters.eq[t],
+                        num_control, num_constr, reg, data.reg_last, options)
+            end
             data.status != 0 && break
 
-            ldiv!(bk, update_rule.parameters.eq[t])
 
             # update parameters of update rule for ineq. dual variables, i.e., 
 

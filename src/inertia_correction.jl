@@ -274,3 +274,28 @@ function inertia_correction!(bk_ws::BunchKaufmanWs{T}, kkt_mat::Matrix{T}, D_cac
     end
     return bk, status, reg, δ_c
 end
+
+function inertia_correction_nullspace(H, A, update_rule_eq::Matrix{T}, num_controls::Int64,
+                    num_constraints::Int64, reg::T, reg_last::T, options::Options) where T
+    ZY = qr(A').Q
+    Z = ZY[:,num_constraints+1:end] # nullspace of A
+    Y = ZY[:,1:num_constraints]
+    h = update_rule_eq[num_controls+1:end, :]
+    g = update_rule_eq[1:num_controls, :]
+    py = (A * Y) \ h
+    M = Symmetric(Z' * H * Z)
+    ck = cholesky(M, RowMaximum(); check=false)
+    if ck.info != 0
+        if iszero(reg) # initial setting of regularisation
+            reg = (reg_last == 0.0) ? options.reg_1 : max(options.reg_min, options.κ_w_m * reg_last)
+        else
+            reg = (reg_last == 0.0) ? options.κ_̄w_p * reg : options.κ_w_p * reg
+        end
+        return 1, reg
+    end
+    pz = ck \ (Z' * (g - H * Y * py))
+    αβ = Y * py + Z * pz
+    update_rule_eq[num_controls+1:end, :] .= ((A * Y)') \ (Y' * (g - H * αβ))
+    update_rule_eq[1:num_controls, :] .= αβ
+    return 0, reg
+end
