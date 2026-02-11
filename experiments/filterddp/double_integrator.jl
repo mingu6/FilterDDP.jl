@@ -39,27 +39,27 @@ for seed = 1:n_ocp
 
     stage_obj = (x, u) -> Δ * (u[2] + u[3])
     term_obj = (x, u) -> 500.0 * dot(x - xN, x - xN)
-    objective = [[Objective(stage_obj, 2, 3) for k = 1:N-1]..., Objective(term_obj, 2, 0)]
+    objective = [[Objective(stage_obj, 2, 3) for k = 1:N-1]..., Objective(term_obj, 2, 3)]
 
     # ## Constraints
 
     path_constr = Constraint((x, u) -> [
         u[2] - u[3] - u[1] * x[2]
     ], 2, 3)
-    constraints = [[path_constr for k = 1:N-1]..., Constraint(num_state, 0)]
+    constraints = [path_constr for k = 1:N]
 
     # ## Bounds
 
     limit = T(10.0)
     bound = Bound(T[-limit, 0.0, 0.0], T[limit, Inf, Inf])
-    bounds = [[bound for k in 1:N-1]..., Bound(T, 0)]
+    bounds = [bound for k in 1:N]
 
     solver = Solver(T, dynamics, objective, constraints, bounds, options=options)
     solver.options.verbose = verbose
     
     # ## Initialise solver and solve
     
-    ū = [[[0.01; 0.01; 0.01] for k = 1:N-1]..., zeros(T, 0)]
+    ū = [[0.01; 0.01; 0.01] for k = 1:N]
     solve!(solver, x1, ū)
 
     if benchmark

@@ -75,11 +75,15 @@ for seed = 1:n_ocp
         J += 50.0 * sum(s)
         return J
     end
-    term_obj = (x, u) -> 200.0 * dot(x - xN, x - xN)
+    term_obj = (x, u) -> begin
+        s = u[num_control .+ (1:num_obstacles)]  
+        J = 200.0 * dot(x - xN, x - xN)
+        J += 50.0 * sum(s)
+    end
 
     objective = [
         [Objective(stage_obj, num_state, num_primal) for k = 1:N-1]...,
-        Objective(term_obj, num_state, 0)
+        Objective(term_obj, num_state, num_primal)
     ]
 
     # ## constraints
@@ -99,7 +103,7 @@ for seed = 1:n_ocp
     end
 
     obs_constr = Constraint(path_constr_fn, num_state, num_primal)
-    constraints = [[obs_constr for k = 1:N-1]..., Constraint(num_state, 0)]
+    constraints = [obs_constr for k = 1:N]
 
     # ## bounds
 
@@ -108,7 +112,7 @@ for seed = 1:n_ocp
         [ul; zeros(T, num_obstacles); zeros(T, num_obstacles)],
         [uu; T(Inf) * ones(T, num_obstacles); T(Inf) * ones(T, num_obstacles)]
     )
-    bounds = [[bound for k in 1:N-1]..., Bound(T, 0)]
+    bounds = [bound for k in 1:N]
 
     # ## Initialise solver and solve
     
@@ -126,7 +130,7 @@ for seed = 1:n_ocp
     end
     
     x1 = T[0.0; 0.0; π / 8; 0.0] + rand(T, num_state) .* T[0.0; 0.0; π / 4; 0.0]
-    ū = [[[zeros(T, 2); T(1e-2) * ones(T, 2 * num_obstacles)] for k = 1:N-1]..., zeros(T, 0)]
+    ū = [[zeros(T, 2); T(1e-2) * ones(T, 2 * num_obstacles)] for k = 1:N]
 
     solve!(solver, x1, ū)
     
@@ -148,7 +152,7 @@ for seed = 1:n_ocp
     else
         push!(results, [seed, solver.data.k, solver.data.status, solver.data.objective, solver.data.primal_inf])
     end
-    visualise && savefig("plots/concar_IPDDP_$seed.pdf")
+    visualise && savefig("plots/concar_FilterDDP_$seed.pdf")
 
     push!(params, [F_lim; τ_lim; obs_1; obs_2; obs_3; obs_4; x1])
 end

@@ -75,11 +75,13 @@ for seed = 1:n_ocp
 
 		J = 200.0 * dot(q̇ᵐ⁻, q̇ᵐ⁻)
 		J += 700.0 * dot(q - qN, q - qN)
+
+		J += 0.01 * u' * u
 		return J
 	end
 
 	stage = Objective(stage_obj, nx, nu)
-	objective = [[stage for k = 1:N-1]..., Objective(term_obj, nx, 0)]
+	objective = [[stage for k = 1:N-1]..., Objective(term_obj, nx, nu)]
 
 	# ## Constraints
 
@@ -87,8 +89,7 @@ for seed = 1:n_ocp
 		(x, u) -> implicit_contact_dynamics_slack(acrobot_impact, x, u, Δ),
 		nx, nu
 		)
-
-	constraints = [[path_constr for k = 1:N-1]..., Constraint(nx, 0)]
+	constraints = [path_constr for _ = 1:N]
 
 	# ## Bounds
 
@@ -97,7 +98,7 @@ for seed = 1:n_ocp
 		[-limit; -T(Inf) * ones(T, nq); zeros(T, nc); zeros(T, nc); zeros(T, nc)],
 		[limit; T(Inf) * ones(T, nq); T(Inf) * ones(T, nc); T(Inf) * ones(T, 2 * nc)]
 	)
-	bounds = [[bound for k in 1:N-1]..., Bound(T, 0)]
+	bounds = [bound for _ = 1:N]
 
 	solver = Solver(T, dynamics, objective, constraints, bounds, options=options)
 	solver.options.verbose = verbose
@@ -108,8 +109,8 @@ for seed = 1:n_ocp
 	q1_plus = zeros(T, 2)
 	x1 = [q1; q1_plus]
 
-	q_init = [zeros(T, 2) for k = 1:N-1]
-	ū = [[[zeros(T, nτ); q_init[k]; T(0.01) * ones(T, nc); T(0.01) * ones(T, 2 * nc)] for k = 1:N-1]..., zeros(T, 0)]
+	q_init = [zeros(T, 2) for _ = 1:N]
+	ū = [[zeros(T, nτ); q_init[k]; T(0.01) * ones(T, nc); T(0.01) * ones(T, 2 * nc)] for k = 1:N]
 	solve!(solver, x1, ū)
 
 	if benchmark
@@ -132,18 +133,18 @@ for seed = 1:n_ocp
 				acrobot_impact.m2, acrobot_impact.I2, acrobot_impact.l2, acrobot_impact.lc2])
 
 	# ## Plot solution
-	if seed == 1
+	if seed == 1 && visualise
 		x_sol, u_sol = get_trajectory(solver)
 		θe = map(x -> x[4], x_sol[1:end-1])
 		s1 = map(θ -> π / 2 - θ, θe)
 		s2 = map(θ -> θ + π / 2, θe)
 		λ1 = map(u -> u[4], u_sol[1:end-1])
 		λ2 = map(u -> u[5], u_sol[1:end-1])
-		plot(range(0, Δ * (N-1), N-1), [s1 s2 λ1 λ2], xtickfontsize=16, ytickfontsize=16, xlabel=L"$t$", ylims=(0,5),
+		plot!(range(0, Δ * (N-1), N-1), [s1 s2 λ1 λ2], xtickfontsize=16, ytickfontsize=16, xlabel=L"$t$", ylims=(0,5),
 			legendfontsize=16, linewidth=2, xlabelfontsize=16, linestyle=[:solid :solid :dash :dash], linecolor=[1 2 1 2], 
 			legend_columns=-1, fontfamily="Computer Modern",
 			background_color_legend = nothing, label=[L"$s_t^{(1)}$" L"$s_t^{(2)}$" L"$\lambda^{(1)}_t$" L"$\lambda^{(2)}_t$"])
-		savefig("plots/acrobot_contact_IPDDP.pdf")
+		savefig("plots/acrobot_contact_FilterDDP.pdf")
 	end
 
 	# ## Visualise trajectory using MeshCat

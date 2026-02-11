@@ -69,17 +69,18 @@ for seed = 1:n_ocp
 
 		J = 200.0 * dot(q̇ᵐ⁻, q̇ᵐ⁻)
 		J += 700.0 * dot(q - qN, q - qN)
+
+        J += 0.01 * u' * u
 		return J
 	end
 
 	stage = Objective(stage_obj, nx, nu)
-	objective = [[stage for k = 1:N-1]..., Objective(term_obj, nx, 0)]
+	objective = [[stage for k = 1:N-1]..., Objective(term_obj, nx, nu)]
 
     # ## Constraints
 
     path_constr = Constraint((x, u) -> implicit_contact_dynamics_slack(cartpole, x, u, Δ), nx, nu)
-
-    constraints = [[path_constr for k = 1:N-1]..., Constraint(nx, 0)]
+    constraints = [path_constr for _ = 1:N]
 
     # ## Bounds
 
@@ -88,7 +89,7 @@ for seed = 1:n_ocp
         [-limit * ones(T, nF); -T(Inf) * ones(T, nq); zeros(T, 6 * nc); zeros(T, 6)],
         [limit * ones(T, nF); T(Inf) * ones(T, nq); Inf * ones(T, 6 * nc); T(Inf) * ones(T, 6)]
     )
-    bounds = [[bound for k in 1:N-1]..., Bound(T, 0)]
+    bounds = [bound for _ = 1:N]
 
     solver = Solver(T, dynamics, objective, constraints, bounds, options=options)
     solver.options.verbose = verbose
@@ -99,8 +100,8 @@ for seed = 1:n_ocp
 	q1_plus = zeros(T, 2)
 	x1 = [q1; q1_plus]
 
-    q_init = [zeros(T, 2) for k = 1:N-1]
-    ū = [[[zeros(T, nF); q_init[k]; T(0.01) * ones(T, 6 * nc); T(0.01) * ones(T, 6)] for k = 1:N-1]..., zeros(T, 0)]
+    q_init = [zeros(T, 2) for _ = 1:N]
+    ū = [[zeros(T, nF); q_init[k]; T(0.01) * ones(T, 6 * nc); T(0.01) * ones(T, 6)] for k = 1:N]
     
     solve!(solver, x1, ū)
 
@@ -132,7 +133,7 @@ for seed = 1:n_ocp
     end
 
     # ## Plot solution
-	if seed == 1
+	if visualise && seed == 1
 		x_sol, u_sol = get_trajectory(solver)
         qdotplus = map(x -> (x[3:4] - x[1:2]) / Δ , x_sol[1:end-1])
         qd1 = map(q -> q[1], qdotplus)
@@ -144,7 +145,7 @@ for seed = 1:n_ocp
 			legendfontsize=14, linewidth=2, xlabelfontsize=16, linestyle=[:solid :solid :dash :dash :solid], linecolor=[1 2 1 2 3], 
             legendposition=:top, legendtitleposition=:left, legend_columns=-1, fontfamily="Computer Modern",
 			background_color_legend = nothing, label=[L"$p_t^{vm+}$" L"$\theta_t^{vm+}$" L"$\lambda^{(1)}_t$" L"$\lambda^{(2)}_t$" L"F_t"])
-		savefig("plots/cartpole_friction_IPDDP.pdf")
+		savefig("plots/cartpole_friction_FilterDDP.pdf")
 	end
 end
 

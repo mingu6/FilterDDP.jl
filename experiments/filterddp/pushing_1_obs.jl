@@ -100,8 +100,8 @@ for seed = 1:n_ocp
     # objective
 
     stage_obj = (x, u) -> 1e-2 * dot(u[1:2], u[1:2]) + 2. * sum(u[7:8]) + 2. * sum(u[11])
-    term_obj = (x, u) -> 20.0 * dot(x - xN, x - xN)
-    objective = [[Objective(stage_obj, nx, nu) for k = 1:N-1]..., Objective(term_obj, nx, 0)]
+    term_obj = (x, u) -> 20.0 * dot(x - xN, x - xN) + 2. * sum(u[7:8]) + 2. * sum(u[11])
+    objective = [[Objective(stage_obj, nx, nu) for k = 1:N-1]..., Objective(term_obj, nx, nu)]
 
     # constraints
 
@@ -122,20 +122,20 @@ for seed = 1:n_ocp
     end
 
     path_constr = Constraint(constr, nx, nu)
-    constraints = [[path_constr for k = 1:N-1]..., Constraint(nx, 0)]
+    constraints = [path_constr for k = 1:N]
 
     # Bounds
 
     bound = Bound(T[0.0, -force_lim, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.9, 0.0, 0.0],
                 T[force_lim, force_lim, vel_lim, vel_lim, Inf, Inf, Inf, Inf, 0.9, Inf, Inf])
-    bounds = [[bound for k in 1:N-1]..., Bound(T, 0)]
+    bounds = [bound for k in 1:N]
 
     solver = Solver(Float64, dynamics, objective, constraints, bounds, options=options)
     solver.options.verbose = verbose
         
     # ## Initialise solver and solve
     
-    ū = [[0.01 .* ones(T, nu) for k = 1:N-1]..., zeros(T, 0)]
+    ū = [0.01 .* ones(T, nu) for k = 1:N]
     solve!(solver, x1, ū)
 
     if benchmark
@@ -157,7 +157,7 @@ for seed = 1:n_ocp
     push!(params, [xyc; μ_fric; obstacle])
 
     # ## Plot solution
-	if seed == 4
+	if seed == 4 && visualise
 		x_sol, u_sol = get_trajectory(solver)
         phidot = map(u -> u[3] - u[4] , u_sol[1:end-1])
         fric_lim = map(u -> μ_fric * u[1], u_sol[1:end-1])
@@ -171,7 +171,7 @@ for seed = 1:n_ocp
 			legendfontsize=14, linewidth=2, xlabelfontsize=14, ylabelfontsize=14, linestyle=[:dash :solid :solid], linecolor=[2 3 3], 
             legendposition=:topright, legendtitleposition=:left, ylims=(-0.10, 0.10), alpha=[1. 0.5 0.5], legend_columns=-1, fontfamily="Computer Modern",
 			background_color_legend = nothing, label= [L"$f_t^T$" L"$\pm c_f f_t^n$" false])
-		savefig("plots/pushing_IPDDP.pdf")
+		savefig("plots/pushing_FilterDDP.pdf")
 	end
 
     # ## Plot state get_trajectory
