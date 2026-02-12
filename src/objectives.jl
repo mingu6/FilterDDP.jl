@@ -20,12 +20,24 @@ function Objective(f::Function, num_state::Int, num_control::Int)
     hessian_control_control = Symbolics.jacobian(gradient_control, u)
     hessian_control_state = Symbolics.jacobian(gradient_control, x)
 
-    evaluate_func = eval(Symbolics.build_function([evaluate], x, u)[2])
-    gradient_state_func = eval(Symbolics.build_function(gradient_state, x, u)[2])
-    gradient_control_func = eval(Symbolics.build_function(gradient_control, x, u)[2])
-    hessian_state_state_func = eval(Symbolics.build_function(hessian_state_state, x, u)[2])
-    hessian_control_control_func = eval(Symbolics.build_function(hessian_control_control, x, u)[2])
-    hessian_control_state_func = eval(Symbolics.build_function(hessian_control_state, x, u)[2])
+    evaluate_func = eval(
+        Symbolics._build_function(Symbolics.JuliaTarget(), [evaluate], x, u; skipzeros=true)[2]
+        )
+    gradient_state_func = eval(
+        Symbolics._build_function(Symbolics.JuliaTarget(), gradient_state, x, u; skipzeros=true)[2]
+        )
+    gradient_control_func = eval(
+        Symbolics._build_function(Symbolics.JuliaTarget(), gradient_control, x, u; skipzeros=true)[2]
+        )
+    hessian_state_state_func = eval(
+        Symbolics._build_function(Symbolics.JuliaTarget(), hessian_state_state, x, u; skipzeros=true)[2]
+        )
+    hessian_control_control_func = eval(
+        Symbolics._build_function(Symbolics.JuliaTarget(), hessian_control_control, x, u; skipzeros=true)[2]
+        )
+    hessian_control_state_func = eval(
+        Symbolics._build_function(Symbolics.JuliaTarget(), hessian_control_state, x, u; skipzeros=true)[2]
+        )
 
     return Objective(evaluate_func, gradient_state_func, gradient_control_func,
         hessian_state_state_func, hessian_control_control_func, hessian_control_state_func,

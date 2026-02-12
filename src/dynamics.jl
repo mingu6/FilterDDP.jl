@@ -23,15 +23,25 @@ function Dynamics(f::Function, num_state::Int, num_control::Int; quasi_newton::B
     jacobian_state = Symbolics.jacobian(y, x)
     jacobian_control = Symbolics.jacobian(y, u)
     evaluate_func = eval(Symbolics.build_function(y, x, u)[2])
-    jacobian_state_func = eval(Symbolics.build_function(jacobian_state, x, u)[2])
-    jacobian_control_func = eval(Symbolics.build_function(jacobian_control, x, u)[2])
+    jacobian_state_func = eval(
+        Symbolics._build_function(Symbolics.JuliaTarget(), jacobian_state, x, u; skipzeros=true)[2]
+        )
+    jacobian_control_func = eval(
+        Symbolics._build_function(Symbolics.JuliaTarget(), jacobian_control, x, u; skipzeros=true)[2]
+        )
     if !quasi_newton
         vfxx = sum([vx[t] .* Symbolics.hessian(y[t], x) for t in 1:num_next_state])
         vfux = sum([vx[t] .* Symbolics.jacobian(Symbolics.gradient(y[t], u), x) for t in 1:num_next_state])
         vfuu = sum([vx[t] .* Symbolics.hessian(y[t], u) for t in 1:num_next_state])
-        vfxx_func = eval(Symbolics.build_function(vfxx, x, u, vx)[2])
-        vfux_func = eval(Symbolics.build_function(vfux, x, u, vx)[2])
-        vfuu_func = eval(Symbolics.build_function(vfuu, x, u, vx)[2])
+        vfxx_func = eval(
+            Symbolics._build_function(Symbolics.JuliaTarget(), vfxx, x, u, vx; skipzeros=true)[2]
+            )
+        vfux_func = eval(
+            Symbolics._build_function(Symbolics.JuliaTarget(), vfux, x, u, vx; skipzeros=true)[2]
+            )
+        vfuu_func = eval(
+            Symbolics._build_function(Symbolics.JuliaTarget(), vfuu, x, u, vx; skipzeros=true)[2]
+            )
     else
         vfxx_func = nothing
         vfux_func = nothing

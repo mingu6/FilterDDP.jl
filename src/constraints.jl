@@ -22,9 +22,15 @@ function Constraint(c::Function, num_state::Int, num_control::Int; quasi_newton:
     jacobian_state = Symbolics.jacobian(evaluate, x)
     jacobian_control = Symbolics.jacobian(evaluate, u)
 
-    evaluate_func = eval(Symbolics.build_function(evaluate, x, u)[2])
-    jacobian_state_func = eval(Symbolics.build_function(jacobian_state, x, u)[2])
-    jacobian_control_func = eval(Symbolics.build_function(jacobian_control, x, u)[2])
+    evaluate_func = eval(
+        Symbolics._build_function(Symbolics.JuliaTarget(), evaluate, x, u; skipzeros=true)[2]
+        )
+    jacobian_state_func = eval(
+        Symbolics._build_function(Symbolics.JuliaTarget(), jacobian_state, x, u; skipzeros=true)[2]
+        )
+    jacobian_control_func = eval(
+        Symbolics._build_function(Symbolics.JuliaTarget(), jacobian_control, x, u; skipzeros=true)[2]
+        )
 
     num_constraint = length(evaluate)
     
@@ -34,9 +40,15 @@ function Constraint(c::Function, num_state::Int, num_control::Int; quasi_newton:
         vcxx = Symbolics.jacobian(jacobian_state' * v, x)
         vcux = Symbolics.jacobian(jacobian_control' * v, x)
         vcuu = Symbolics.jacobian(jacobian_control' * v, u)
-        vcxx_func = eval(Symbolics.build_function(vcxx, x, u, v)[2])
-        vcux_func = eval(Symbolics.build_function(vcux, x, u, v)[2])
-        vcuu_func = eval(Symbolics.build_function(vcuu, x, u, v)[2])
+        vcxx_func = eval(
+            Symbolics._build_function(Symbolics.JuliaTarget(), vcxx, x, u, v; skipzeros=true)[2]
+            )
+        vcux_func = eval(
+            Symbolics._build_function(Symbolics.JuliaTarget(), vcux, x, u, v; skipzeros=true)[2]
+            )
+        vcuu_func = eval(
+            Symbolics._build_function(Symbolics.JuliaTarget(), vcuu, x, u, v; skipzeros=true)[2]
+            )
     else
         vcxx_func = nothing
         vcux_func = nothing
