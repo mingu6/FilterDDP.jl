@@ -1,4 +1,4 @@
-function forward_pass!(update_rule::UpdateRuleData{T}, problem::ProblemData{T}, data::SolverData{T},
+function forward_pass!(ocp::OCP{T}, ws::FilterDDPWorkspace{T}, data::SolverData{T},
             options::Options{T}; verbose=false) where T
     data.l = 0  # line search iteration counter
     data.status = 0
@@ -11,27 +11,27 @@ function forward_pass!(update_rule::UpdateRuleData{T}, problem::ProblemData{T}, 
     L_prev = data.barrier_lagrangian_curr
     θ = θ_prev
     
-    ΔL = expected_change_lagrangian(update_rule, problem)  # m(γ) / γ
+    ΔL = expected_change_lagrangian(ws)  # m in paper
 
     while data.step_size >= eps(T)
         γ = data.step_size
         try
-            rollout!(update_rule, data, problem, step_size=γ)
+            rollout!(ocp, ws, data, step_size=γ)
         catch e
             # reduces step size if NaN or Inf encountered
             e isa DomainError && (data.step_size *= 0.5, continue)
             rethrow(e)
         end
         
-        data.status = check_fraction_boundary(problem, update_rule, τ)
+        data.status = check_fraction_boundary(ws, τ, data.k)
         data.status != 0 && (data.step_size *= 0.5, continue)
 
-        constraint!(problem, data.μ; mode=:current)
+        constraints!(ocp.constraints, ws; mode=:current)
         
         # used for sufficient decrease from current iterate step acceptance criterion
-        θ = constraint_violation_1norm(problem, mode=:current)
-        L = barrier_lagrangian!(problem, data, update_rule, mode=:current)
-        
+        θ = constraint_violation_1norm(ws; mode=:current)
+        L = barrier_lagrangian!(ocp, ws, data; mode=:current)
+
         # check acceptability to filter
         data.status = !any(x -> (θ >= x[1] && L >= x[2]), data.filter) ? 0 : 3
         data.status != 0 && (data.step_size *= 0.5, data.l += 1, continue)  # failed, reduce step size
@@ -56,98 +56,95 @@ function forward_pass!(update_rule::UpdateRuleData{T}, problem::ProblemData{T}, 
     data.status != 0 && (verbose && (@warn "Line search failed to find a suitable iterate"))
 end
 
-function check_fraction_boundary(problem::ProblemData{T}, update_rule::UpdateRuleData{T}, τ::T) where T
-    N = problem.horizon
+function check_fraction_boundary(ws::FilterDDPWorkspace{T}, τ::T, k) where T
+    for wse in ws
+        zl, zl̄ = wse.current.zl, wse.nominal.zl
+        zu, zū = wse.current.zu, wse.nominal.zu
+        ul, ul̄ = wse.current.ul, wse.nominal.ul
+        uu, uū = wse.current.uu, wse.nominal.uu
 
-    _, _, _, il, iu = primal_trajectories(problem, mode=:current)
-    _, zl, zu = dual_trajectories(problem, mode=:current)
-    _, _, _, il̄, iū = primal_trajectories(problem, mode=:nominal)
-    _, zl̄, zū = dual_trajectories(problem, mode=:nominal)
-
-    for t = 1:N
-        if any(c * (1. - τ) > d for (c, d) in zip(il̄[t], il[t]))
+        if any(c * (1. - τ) > d for (c, d) in zip(ul̄, ul))
             return 2
         end
 
-        if any(c * (1. - τ) > d for (c, d) in zip(iū[t], iu[t]))
+        if any(c * (1. - τ) > d for (c, d) in zip(uū, uu))
             return 2
         end
 
-        if any(c * (1. - τ) > d for (c, d) in zip(zl̄[t], zl[t]))
+        if any(c * (1. - τ) > d for (c, d) in zip(zl̄, zl))
             return 2
         end
 
-        if any(c * (1. - τ) > d for (c, d) in zip(zū[t], zu[t]))
+        if any(c * (1. - τ) > d for (c, d) in zip(zū, zu))
             return 2
         end
     end
     return 0
 end
 
-function expected_change_lagrangian(update_rule::UpdateRuleData{T}, problem::ProblemData{T}) where T
+function expected_change_lagrangian(ws::FilterDDPWorkspace{T}) where T
     ΔL = T(0.0)
-    N = problem.horizon
-    
-    for t = N:-1:1
-        ΔL += dot(update_rule.Qû[t], update_rule.parameters.α[t])
-        ΔL += dot(problem.nominal_constraints[t], update_rule.parameters.ψ[t])
+    for wse in ws
+        nu = length(wse.Qû)
+        ΔL += dot(wse.Qû, wse.eq_update_params[1:nu, 1])
+        ΔL += dot(wse.nominal.c, wse.eq_update_params[nu+1:end, 1])
     end
     return ΔL
 end
 
-function rollout!(update_rule::UpdateRuleData{T}, data::SolverData{T}, problem::ProblemData{T}; step_size::T=1.0) where T
-    dynamics = problem.model.dynamics
-    bounds = problem.bounds
-    N = problem.horizon
-    
-    x, u, _, il, iu = primal_trajectories(problem, mode=:current)
-    ϕ, zl, zu = dual_trajectories(problem, mode=:current)
-    x̄, ū, _, _, _ = primal_trajectories(problem, mode=:nominal)
-    ϕ̄, zl̄, zū = dual_trajectories(problem, mode=:nominal)
-    
-    x[1] .= x̄[1]
+function rollout!(ocp::OCP{T}, ws::FilterDDPWorkspace{T}, data::SolverData{T}; step_size::T=1.0) where T
+    ws[1].current.x .= ws[1].nominal.x
 
-    α, ψ = update_rule.parameters.α, update_rule.parameters.ψ
-    β, ω = update_rule.parameters.β, update_rule.parameters.ω
-    χl, χu = update_rule.parameters.χl, update_rule.parameters.χu
-    ζl, ζu = update_rule.parameters.ζl, update_rule.parameters.ζu
-    
-    δx = update_rule.x_tmp
+    for t in 1:ocp.N
+        nu = ocp.constraints[t].nu
+        χl = @views ws[t].ineq_update_params[1:nu, 1]
+        χu = @views ws[t].ineq_update_params[nu+1:end, 1]
+        α = @views ws[t].eq_update_params[1:nu, 1]
+        ψ = @views ws[t].eq_update_params[nu+1:end, 1]
+        β = @views ws[t].eq_update_params[1:nu, 2:end]
+        ω = @views ws[t].eq_update_params[nu+1:end, 2:end]
+        ζl = @views ws[t].ineq_update_params[1:nu, 2:end]
+        ζu = @views ws[t].ineq_update_params[nu+1:end, 2:end]
+        u, ū = ws[t].current.u, ws[t].nominal.u
+        ϕ, ϕ̄ = ws[t].current.ϕ, ws[t].nominal.ϕ
+        zl, zl̄ = ws[t].current.zl, ws[t].nominal.zl
+        zu, zū = ws[t].current.zu, ws[t].nominal.zu
+        ul, uu = ws[t].current.ul, ws[t].current.uu
 
-    for t in 1:N
-        δx[t] .= x[t]
-        δx[t] .-= x̄[t]
+        δx = ws[t].x_tmp
+        δx .= ws[t].current.x
+        δx .-= ws[t].nominal.x
 
         # u[t] .= ū[t] + β[t] * (x[t] - x̄[t]) + step_size * α[t]
-        u[t] .= α[t]
-        u[t] .*= step_size
-        u[t] .+= ū[t]
-        mul!(u[t], β[t], δx[t], 1.0, 1.0)
+        u .= α
+        u .*= step_size
+        u .+= ū
+        mul!(u, β, δx, 1.0, 1.0)
 
         # ϕ[t] .= ϕ̄[t] + ω[t] * (x[t] - x̄[t]) + step_size * ψ[t]
-        ϕ[t] .= ψ[t]
-        ϕ[t] .*= step_size
-        ϕ[t] .+= ϕ̄[t]
-        mul!(ϕ[t], ω[t], δx[t], 1.0, 1.0)
+        ϕ .= ψ
+        ϕ .*= step_size
+        ϕ .+= ϕ̄
+        mul!(ϕ, ω, δx, 1.0, 1.0)
 
-        zl[t] .= χl[t]
-        zl[t] .*= step_size
-        zl[t] .+= zl̄[t]
-        mul!(zl[t], ζl[t], δx[t], 1.0, 1.0)
+        zl .= χl
+        zl .*= step_size
+        zl .+= zl̄
+        mul!(zl, ζl, δx, 1.0, 1.0)
 
-        zu[t] .= χu[t]
-        zu[t] .*= step_size
-        zu[t] .+= zū[t]
-        mul!(zu[t], ζu[t], δx[t], 1.0, 1.0)
+        zu .= χu
+        zu .*= step_size
+        zu .+= zū
+        mul!(zu, ζu, δx, 1.0, 1.0)
         
         fn_eval_time_ = time()
-        t < N && dynamics!(dynamics[t], x[t+1], x[t], u[t])
+        t < ocp.N && dynamics!(ocp.dynamics[t], ws[t], ws[t+1], mode=:current)
         
         # evaluate inequality constraints
-        il[t] .= u[t]
-        il[t] .-= bounds[t].lower
-        iu[t] .= bounds[t].upper
-        iu[t] .-= u[t]
+        ul .= u
+        ul .-= ocp.control_limits[t].l
+        uu .= ocp.control_limits[t].u
+        uu .-= u
         data.fn_eval_time += time() - fn_eval_time_
     end
 end

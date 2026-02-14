@@ -263,7 +263,7 @@ function inertia_correction!(bk_ws::BunchKaufmanWs{T}, kkt_mat::Matrix{T}, D_cac
     if info > 0
         δ_c = options.δ_c * μ^options.κ_c
     end
-    np, _, _ = inertia!(bk, D_cache[1], D_cache[2]; atol=T(1e-12))
+    np, _, _ = inertia!(bk, D_cache[1], D_cache[2]; atol=T(options.linsolve_tol))
     if np != num_controls || info != 0
         if iszero(reg) # initial setting of regularisation
             reg = (reg_last == 0.0) ? options.reg_1 : max(options.reg_min, options.κ_w_m * reg_last)

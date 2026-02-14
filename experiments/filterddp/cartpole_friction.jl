@@ -5,6 +5,7 @@ using Plots
 using MeshCat
 using Printf
 using LaTeXStrings
+using Revise
 
 visualise = false
 benchmark = false
@@ -50,19 +51,17 @@ for seed = 1:n_ocp
     # ## Dynamics - forward Euler
 
     f = (x, u) -> [x[nq .+ (1:nq)]; u[nF .+ (1:nq)]]
-    cartpole_dyn = Dynamics(f, nx, nu)
-    dynamics = [cartpole_dyn for k = 1:N-1]
+    dyn = Dynamics(T, f, nx, nu)
 
     # ## Objective
 
-    function stage_obj(x, u)
+    function l(x, u)
 		F = u[1]
         s = u[(nF + nq + 6 * nc) .+ (1:6)]
 		J = 0.01 * Δ * F * F + sum(s)
 		return J
 	end
-
-	function term_obj(x, u)
+	function lN(x, u)
         q⁻ = x[1:cartpole.nq]
 		q = x[cartpole.nq .+ (1:cartpole.nq)] 
 		q̇ᵐ⁻ = (q - q⁻) ./ Δ
@@ -73,25 +72,23 @@ for seed = 1:n_ocp
         J += 0.01 * u' * u
 		return J
 	end
-
-	stage = Objective(stage_obj, nx, nu)
-	objective = [[stage for k = 1:N-1]..., Objective(term_obj, nx, nu)]
+	stage_obj = Objective(T, l, nx, nu)
+	term_obj = Objective(T, lN, nx, nu)
 
     # ## Constraints
 
-    path_constr = Constraint((x, u) -> implicit_contact_dynamics_slack(cartpole, x, u, Δ), nx, nu)
-    constraints = [path_constr for _ = 1:N]
+    c = (x, u) -> implicit_contact_dynamics_slack(cartpole, x, u, Δ)
+    constraints = Constraints(T, c, nx, nu)
 
-    # ## Bounds
+    # ## Control Limits
 
-    limit = T(10.0)
-    bound = Bound(
-        [-limit * ones(T, nF); -T(Inf) * ones(T, nq); zeros(T, 6 * nc); zeros(T, 6)],
-        [limit * ones(T, nF); T(Inf) * ones(T, nq); Inf * ones(T, 6 * nc); T(Inf) * ones(T, 6)]
+    cl = ControlLimits(
+        [-T(10.0) * ones(T, nF); -T(Inf) * ones(T, nq);      zeros(T, 6 * nc);         zeros(T, 6)],
+        [ T(10.0) * ones(T, nF);  T(Inf) * ones(T, nq); Inf * ones(T, 6 * nc); T(Inf) * ones(T, 6)]
     )
-    bounds = [bound for _ = 1:N]
 
-    solver = Solver(T, dynamics, objective, constraints, bounds, options=options)
+    ocp = OCP(N, stage_obj, term_obj, dyn; constraints=constraints, control_limits=cl)
+    solver = Solver(ocp; options=options)
     solver.options.verbose = verbose
     
     # ## Initialise solver and solve

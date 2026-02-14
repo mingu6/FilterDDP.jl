@@ -1,83 +1,83 @@
-function solve!(solver::Solver{T}, x1::Vector{T}, controls::Vector{Vector{T}}; kwargs...) where T
-    initialize_trajectory!(solver, controls, x1)
+function solve!(solver::Solver{T}, x1::Vector{T}, u::Vector{Vector{T}}; kwargs...) where T
+    initialize_trajectory!(solver, u, x1)
     solve!(solver; kwargs...)
 end
 
 function solve!(solver::Solver{T}) where T
     (solver.options.verbose && solver.data.k==0) && solver_info()
 
-	update_rule = solver.update_rule
-    problem = solver.problem
+	ocp = solver.ocp
+    ws = solver.ws
     options = solver.options
 	data = solver.data
     
-    reset!(problem.model)
-    reset!(problem.objective_data)
+    reset_mem!(solver.ocp.dynamics)
+    reset_mem!(solver.ocp.objective)
     reset!(data)
-    reset_duals!(problem)
+    reset_duals!(solver)
     
     time0 = time()
     
     # automatically select initial perturbation. loosely based on bound of CS condition (duality) for LPs
     fn_eval_time_ = time()
-    objective!(data, problem, mode=:nominal)
+    data.objective = objective(ocp.objective, ws; mode=:nominal)
     data.μ = options.μ_init
 
-    constraint!(problem, data.μ; mode=:nominal)
+    constraints!(ocp.constraints, ws; mode=:nominal)
     data.fn_eval_time += time() - fn_eval_time_
     
     # update performance measures for first iterate (req. for sufficient decrease conditions for step acceptance)
-    data.primal_1_curr = constraint_violation_1norm(problem, mode=:nominal)
-    data.barrier_lagrangian_curr = barrier_lagrangian!(problem, data, update_rule, mode=:nominal)
+    data.primal_1_curr = constraint_violation_1norm(ws; mode=:nominal)
+    data.barrier_lagrangian_curr = barrier_lagrangian!(ocp, ws, data; mode=:nominal)
     
     # filter initialization for constraint violation and threshold for switching rule init. (step acceptance)
     data.max_primal_1 = 1e4 * max(1.0, data.primal_1_curr)
     data.min_primal_1 = 1e-4 * max(1.0, data.primal_1_curr)
     reset_filter!(data)
     
-    num_bounds = sum(b.num_lower + b.num_upper for b in problem.bounds)
+    ni = sum(cl.nl + cl.nu for cl in ocp.control_limits)
 
     while data.k < options.max_iterations
         fn_eval_time_ = time()
-        evaluate_derivatives!(problem, mode=:nominal)
+        evaluate_derivatives!(ocp, ws; mode=:nominal)
         data.fn_eval_time += time() - fn_eval_time_
         
-        backward_pass!(update_rule, problem, data, options, mode=:nominal, verbose=options.verbose)
+        backward_pass!(ocp, ws, data, options, verbose=options.verbose)
         data.status != 0 && break
         # check (outer) overall problem convergence
 
-        data.dual_inf = dual_error(update_rule, problem, options)
-        data.primal_inf = primal_error(problem)
-        data.cs_inf = cs_error(update_rule, problem, options, T(0.0))
+        data.dual_inf = dual_error(ocp, ws, options)
+        data.primal_inf = primal_error(ws)
+        data.cs_inf = cs_error(ocp, ws, options, T(0.0))
         
         # check (inner) barrier problem convergence and update barrier parameter if so
 
-        cs_inf_μ = cs_error(update_rule, problem, options, data.μ)
+        cs_inf_μ = cs_error(ocp, ws, options, data.μ)
         opt_err_μ = max(data.dual_inf, cs_inf_μ, data.primal_inf)
         opt_err_0 = max(data.dual_inf, data.cs_inf, data.primal_inf)
 
         opt_err_0 < options.optimality_tolerance && break
 
-        if opt_err_μ <= options.κ_ϵ * data.μ && num_bounds > 0 && data.μ > options.optimality_tolerance / 10.0
+        if opt_err_μ <= options.κ_ϵ * data.μ && ni > 0 && data.μ > options.optimality_tolerance / 10.0
             data.μ = max(options.optimality_tolerance / 10.0, min(options.κ_μ * data.μ, data.μ ^ options.θ_μ))
             reset_filter!(data)
             # performance of current iterate updated to account for barrier parameter change
             fn_eval_time_ = time()
-            constraint!(problem, data.μ; mode=:nominal)
+            constraints!(ocp.constraints, ws; mode=:nominal)
             data.fn_eval_time += time() - fn_eval_time_
-            data.barrier_lagrangian_curr = barrier_lagrangian!(problem, data, update_rule, mode=:nominal)
+            data.barrier_lagrangian_curr = barrier_lagrangian!(ocp, ws, data; mode=:nominal)
             
-            data.primal_1_curr = constraint_violation_1norm(problem, mode=:nominal)
+            data.primal_1_curr = constraint_violation_1norm(ws; mode=:nominal)
             data.j += 1
             continue
         end
         
         options.verbose && iteration_status(data, options)
         
-        forward_pass!(update_rule, problem, data, options, verbose=options.verbose)
+        forward_pass!(ocp, ws, data, options, verbose=options.verbose)
         data.status != 0 && break
         
-        update_nominal_trajectory!(problem)
+        update_nominal_trajectory!(ws)
         (!data.armijo_passed && !data.switching) && update_filter!(data, options)
         data.barrier_lagrangian_curr = data.barrier_lagrangian_next
         data.primal_1_curr = data.primal_1_next
@@ -104,96 +104,133 @@ function reset_filter!(data::SolverData{T}) where T
     data.status = 0
 end
 
-function primal_error(problem::ProblemData{T}) where T
-    N = problem.horizon
-
+function primal_error(ws::FilterDDPWorkspace{T}) where T
     primal_inf::T = 0   # constraint violation (primal infeasibility)
-    for t = N:-1:1
-        primal_inf = max(primal_inf, norm(problem.nominal_constraints[t], Inf))
+    for wse in ws
+        primal_inf = max(primal_inf, norm(wse.nominal.c, Inf))
     end
     return primal_inf
 end
 
-function dual_error(update_rule::UpdateRuleData{T}, problem::ProblemData{T},
-                    options::Options{T}) where T
-    N = problem.horizon
-    bounds = problem.bounds
-    ϕ, zl, zu, λ = dual_trajectories(problem, mode=:nominal)
-    lu = problem.objective_data.gradient_control
-    fu = problem.model.jacobian_control
-    cu = problem.constraints_data.jacobian_control
-    u_tmp1 = update_rule.u_tmp1
-
-    num_ineq = 0
+function dual_error(ocp::OCP{T}, ws::FilterDDPWorkspace{T}, options::Options{T}) where T
+    ni = 0              # number of inequality bounds (upper + lower)
     z_norm::T = 0.0
     ϕ_norm::T = 0.0
-    num_constr = problem.constraints_data.num_constraints[1]
+    nc = sum(ocp.nc)
     dual_inf::T = 0     # dual infeasibility (stationarity of Lagrangian of barrier subproblem)
-    for t = N:-1:1
-        u_tmp1[t] .= lu[t]
-        mul!(u_tmp1[t], transpose(cu[t]), ϕ[t], 1.0, 1.0)
-        u_tmp1[t] .-= zl[t]
-        u_tmp1[t] .+= zu[t]
-        t < N && mul!(u_tmp1[t], transpose(fu[t]), λ[t+1], 1.0, 1.0)
-        dual_inf = max(dual_inf, norm(u_tmp1[t], Inf))
 
-        z_norm += sum(zl[t])
-        z_norm += sum(zu[t])
-        ϕ_norm += norm(ϕ[t], 1)
-        num_ineq += bounds[t].num_lower + bounds[t].num_upper
+    for t = ocp.N:-1:1
+        ws[t].u_tmp1 .= ocp.objective[t].lu_mem
+        mul!(ws[t].u_tmp1, transpose(ocp.constraints[t].cu_mem), ws[t].nominal.ϕ, 1.0, 1.0)
+        ws[t].u_tmp1 .-= ws[t].nominal.zl
+        ws[t].u_tmp1 .+= ws[t].nominal.zu
+        t < ocp.N && mul!(ws[t].u_tmp1, transpose(ocp.dynamics[t].fu_mem), ws[t+1].nominal.λ, 1.0, 1.0)
+        dual_inf = max(dual_inf, norm(ws[t].u_tmp1, Inf))
+        z_norm += sum(ws[t].nominal.zl)
+        z_norm += sum(ws[t].nominal.zu)
+        ϕ_norm += norm(ws[t].nominal.ϕ, 1)
+        ni += ocp.control_limits[t].nl + ocp.control_limits[t].nu
     end
-    scaling = max(options.s_max, (ϕ_norm + z_norm) / max(num_ineq + num_constr, 1.0))  / options.s_max
+
+    scaling = max(options.s_max, (ϕ_norm + z_norm) / max(ni + nc, 1.0))  / options.s_max
     return dual_inf / scaling
 end
 
-function cs_error(update_rule::UpdateRuleData{T}, problem::ProblemData{T},
-                    options::Options{T}, μ::T) where T
-    u_tmp1 = update_rule.u_tmp1
-    u_tmp2 = update_rule.u_tmp2
-    N = problem.horizon
-    bounds = problem.bounds
-    _, _, _, il, iu = primal_trajectories(problem, mode=:nominal)
-    _, zl, zu = dual_trajectories(problem, mode=:nominal)
-
-    num_ineq::T = 0
+function cs_error(ocp::OCP{T}, ws::FilterDDPWorkspace{T}, options::Options{T}, μ::T) where T
+    ni::T = 0
     z_norm::T = 0
     cs_inf::T = 0     # dual infeasibility (stationarity of Lagrangian of barrier subproblem)
-    for t = N:-1:1
-        num_ineq += bounds[t].num_lower + bounds[t].num_upper
-        (bounds[t].num_upper == 0 && bounds[t].num_lower == 0) && continue
-        
-        u_tmp1[t] .= il[t] 
-        u_tmp1[t] .*= zl[t]
-        u_tmp1[t] .-= μ
-        replace!(u_tmp1[t], NaN=>0.0)
-        cs_inf = max(cs_inf, norm(u_tmp1[t], Inf))
-        u_tmp2[t] .= iu[t] 
-        u_tmp2[t] .*= zu[t]
-        u_tmp2[t] .-= μ
-        replace!(u_tmp2[t], NaN=>0.0)
-        cs_inf = max(cs_inf, norm(u_tmp2[t], Inf))
-        z_norm += sum(zl[t])
-        z_norm += sum(zu[t])
+
+    for t = ocp.N:-1:1
+        ni += ocp.control_limits[t].nl + ocp.control_limits[t].nu
+        (ocp.control_limits[t].nu == 0 && ocp.control_limits[t].nl == 0) && continue
+        ws[t].u_tmp1 .= ws[t].nominal.ul 
+        ws[t].u_tmp1 .*= ws[t].nominal.zl
+        ws[t].u_tmp1 .-= μ
+        replace!(ws[t].u_tmp1, NaN=>0.0)
+        cs_inf = max(cs_inf, norm(ws[t].u_tmp1, Inf))
+        ws[t].u_tmp2 .= ws[t].nominal.uu
+        ws[t].u_tmp2 .*= ws[t].nominal.zu
+        ws[t].u_tmp2 .-= μ
+        replace!(ws[t].u_tmp2, NaN=>0.0)
+        cs_inf = max(cs_inf, norm(ws[t].u_tmp2, Inf))
+        z_norm += sum(ws[t].nominal.zl)
+        z_norm += sum(ws[t].nominal.zu)
     end
-    scaling = max(options.s_max, z_norm / max(num_ineq, 1.0))  / options.s_max
+    
+    scaling = max(options.s_max, z_norm / max(ni, 1.0))  / options.s_max
     return cs_inf / scaling
 end
 
-function reset_duals!(problem::ProblemData{T}) where T
-    N = problem.horizon
-    bounds = problem.bounds
-    for t = 1:N
-        fill!(problem.eq_duals[t], 0.0)
-        fill!(problem.nominal_eq_duals[t], 0.0)
-        fill!(problem.ineq_duals_lo[t], 0.0)
-        fill!(problem.nominal_ineq_duals_lo[t], 0.0)
-        fill!(problem.ineq_duals_up[t], 0.0)
-        fill!(problem.nominal_ineq_duals_up[t], 0.0)
-        fill!(problem.nominal_dyn_duals[t], 0.0)
-        @views problem.ineq_duals_lo[t][bounds[t].indices_lower].= 1.0
-        @views problem.ineq_duals_up[t][bounds[t].indices_upper] .= 1.0
-        @views problem.nominal_ineq_duals_lo[t][bounds[t].indices_lower] .= 1.0
-        @views problem.nominal_ineq_duals_up[t][bounds[t].indices_upper] .= 1.0
+function reset_duals!(solver::Solver{T}) where T
+    cl = solver.ocp.control_limits
+    for t = 1:solver.ocp.N
+        fill!(solver.ws[t].current.ϕ, 0.0)
+        fill!(solver.ws[t].current.zl, 0.0)
+        fill!(solver.ws[t].current.zu, 0.0)
+        fill!(solver.ws[t].current.λ, 0.0)
+        @views solver.ws[t].current.zl[cl[t].indl] .= 1.0
+        @views solver.ws[t].current.zu[cl[t].indu] .= 1.0
+        fill!(solver.ws[t].nominal.ϕ, 0.0)
+        fill!(solver.ws[t].nominal.zl, 0.0)
+        fill!(solver.ws[t].nominal.zu, 0.0)
+        fill!(solver.ws[t].nominal.λ, 0.0)
+        @views solver.ws[t].nominal.zl[cl[t].indl] .= 1.0
+        @views solver.ws[t].nominal.zu[cl[t].indu] .= 1.0
     end
 end
 
+function barrier_lagrangian!(ocp::OCP{T}, ws::FilterDDPWorkspace{T}, data::SolverData{T}; mode=:nominal) where T   
+    fn_eval_time_ = time()
+
+    barrier_lagrangian = 0.
+    for t = 1:ocp.N
+        if mode == :nominal
+            ws[t].u_tmp1 .= log.(ws[t].nominal.ul)
+        else
+            ws[t].u_tmp1 .= log.(ws[t].current.ul)
+        end
+        for i in ocp.control_limits[t].indl
+            barrier_lagrangian -= ws[t].u_tmp1[i]
+        end
+        if mode == :nominal
+            ws[t].u_tmp1 .= log.(ws[t].nominal.uu)
+        else
+            ws[t].u_tmp1 .= log.(ws[t].current.uu)
+        end
+
+        for i in ocp.control_limits[t].indu
+            barrier_lagrangian -= ws[t].u_tmp1[i]
+        end
+    end
+    
+    barrier_lagrangian *= data.μ
+    data.objective = objective(ocp.objective, ws, mode=mode)
+    barrier_lagrangian += data.objective
+
+    data.fn_eval_time += time() - fn_eval_time_
+
+    for wse in ws
+        if mode == :nominal
+            barrier_lagrangian += dot(wse.nominal.c, wse.nominal.ϕ)
+        else
+            barrier_lagrangian += dot(wse.current.c, wse.current.ϕ)
+        end
+    end
+
+    return barrier_lagrangian
+end
+
+function constraint_violation_1norm(ws::FilterDDPWorkspace{T}; mode=:nominal) where T
+    constr_violation = 0.
+    if mode == :nominal
+        for wse in ws
+            constr_violation += norm(wse.nominal.c, 1)
+        end
+    else
+        for wse in ws
+            constr_violation += norm(wse.current.c, 1)
+        end
+    end
+    return constr_violation
+end

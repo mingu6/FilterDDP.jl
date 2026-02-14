@@ -5,6 +5,7 @@ using Plots
 using MeshCat
 using Printf
 using LaTeXStrings
+using Revise
 
 visualise = false
 benchmark = false
@@ -56,19 +57,17 @@ for seed = 1:n_ocp
 	# ## Dynamics - implicit variational integrator (midpoint)
 
 	f = (x, u) -> [x[nq .+ (1:nq)]; u[nτ .+ (1:nq)]]
-	dyn_acrobot = Dynamics(f, nx, nu)
-	dynamics = [dyn_acrobot for k = 1:N-1]
+	dyn = Dynamics(T, f, nx, nu)
 
 	# ## Objective
 
-	function stage_obj(x, u)
+	function l(x, u)
 		τ = u[1]
 		s = u[(nτ + nq + 2 * nc) .+ (1:nc)]
 		J = 0.01 * Δ * τ * τ + 2. * sum(s)
 		return J
 	end
-
-	function term_obj(x, u)
+	function lN(x, u)
 		q⁻ = x[1:acrobot_impact.nq] 
 		q = x[acrobot_impact.nq .+ (1:acrobot_impact.nq)] 
 		q̇ᵐ⁻ = (q - q⁻) ./ Δ
@@ -79,38 +78,29 @@ for seed = 1:n_ocp
 		J += 0.01 * u' * u
 		return J
 	end
-
-	stage = Objective(stage_obj, nx, nu)
-	objective = [[stage for k = 1:N-1]..., Objective(term_obj, nx, nu)]
+	stage_obj = Objective(T, l, nx, nu)
+	term_obj = Objective(T, lN, nx, nu)
 
 	# ## Constraints
 
-	path_constr = Constraint(
-		(x, u) -> implicit_contact_dynamics_slack(acrobot_impact, x, u, Δ),
-		nx, nu
-		)
-	constraints = [path_constr for _ = 1:N]
+	c = (x, u) -> implicit_contact_dynamics_slack(acrobot_impact, x, u, Δ)
+	constraints = Constraints(T, c, nx, nu)
 
-	# ## Bounds
+	# ## Control Limits
 
-	limit = T(8.0)
-	bound = Bound(
-		[-limit; -T(Inf) * ones(T, nq); zeros(T, nc); zeros(T, nc); zeros(T, nc)],
-		[limit; T(Inf) * ones(T, nq); T(Inf) * ones(T, nc); T(Inf) * ones(T, 2 * nc)]
+	cl = ControlLimits(
+		[-T(8.0); -T(Inf) * ones(T, nq);         zeros(T, 3 * nc)],
+		[ T(8.0); T(Inf) * ones(T, nq); T(Inf) * ones(T, 3 * nc)]
 	)
-	bounds = [bound for _ = 1:N]
 
-	solver = Solver(T, dynamics, objective, constraints, bounds, options=options)
+	ocp = OCP(N, stage_obj, term_obj, dyn; constraints=constraints, control_limits=cl)
+	solver = Solver(ocp; options=options)
 	solver.options.verbose = verbose
 
 	# ## Initialise solver and solve
 	
-	q1 = zeros(T, 2)
-	q1_plus = zeros(T, 2)
-	x1 = [q1; q1_plus]
-
-	q_init = [zeros(T, 2) for _ = 1:N]
-	ū = [[zeros(T, nτ); q_init[k]; T(0.01) * ones(T, nc); T(0.01) * ones(T, 2 * nc)] for k = 1:N]
+	x1 = zeros(T, 4)
+	ū = [[zeros(T, nτ); zeros(T, 2); T(0.01) * ones(T, nc); T(0.01) * ones(T, 2 * nc)] for _ = 1:N]
 	solve!(solver, x1, ū)
 
 	if benchmark

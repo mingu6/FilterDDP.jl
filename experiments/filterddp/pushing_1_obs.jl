@@ -5,6 +5,7 @@ using Plots
 using MeshCat
 using Printf
 using LaTeXStrings
+using Revise
 
 visualise = false
 benchmark = false
@@ -66,7 +67,7 @@ for seed = 1:n_ocp
     nu = 11
     nx = 4
 
-    # dynamics
+    # ## Dynamics
 
     function R(θ)
         return [[cos(θ); sin(θ); 0] [-sin(θ); cos(θ); 0] [0.0; 0.0; 1.0]]
@@ -95,22 +96,23 @@ for seed = 1:n_ocp
         return R(θ)[1:2, 1:2] * [-xl / 2 - r_push; -(xl / 2) * tan(ϕ)] + x[1:2]
     end
 
-    dynamics = [Dynamics(f, nx, nu) for k = 1:N-1]
+    dyn = Dynamics(T, f, nx, nu)
 
-    # objective
+    # ## Objective
 
-    stage_obj = (x, u) -> 1e-2 * dot(u[1:2], u[1:2]) + 2. * sum(u[7:8]) + 2. * sum(u[11])
-    term_obj = (x, u) -> 20.0 * dot(x - xN, x - xN) + 2. * sum(u[7:8]) + 2. * sum(u[11])
-    objective = [[Objective(stage_obj, nx, nu) for k = 1:N-1]..., Objective(term_obj, nx, nu)]
+    l = (x, u) -> 1e-2 * dot(u[1:2], u[1:2]) + 2. * sum(u[7:8]) + 2. * sum(u[11])
+    lN = (x, u) -> 20.0 * dot(x - xN, x - xN) + 2. * sum(u[7:8]) + 2. * sum(u[11])
+    stage_obj = Objective(T, l, nx, nu)
+	term_obj = Objective(T, lN, nx, nu)
 
-    # constraints
+    # ## Constraints
 
     function obs_constr(x, u)
         xdiff = x[1:2] - obstacle[1:2]
         return (obstacle[3] + r_total)^2 - xdiff' * xdiff + u[10] - u[11]
     end
 
-    function constr(x, u)
+    function c(x, u)
         [
         μ_fric * u[1] - u[2] - u[5];
         μ_fric * u[1] + u[2] - u[6];
@@ -121,16 +123,15 @@ for seed = 1:n_ocp
         ]
     end
 
-    path_constr = Constraint(constr, nx, nu)
-    constraints = [path_constr for k = 1:N]
+    constraints = Constraints(T, c, nx, nu)
 
-    # Bounds
+    # ## Control Limits
 
-    bound = Bound(T[0.0, -force_lim, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.9, 0.0, 0.0],
+    cl = ControlLimits(T[0.0, -force_lim, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.9, 0.0, 0.0],
                 T[force_lim, force_lim, vel_lim, vel_lim, Inf, Inf, Inf, Inf, 0.9, Inf, Inf])
-    bounds = [bound for k in 1:N]
 
-    solver = Solver(Float64, dynamics, objective, constraints, bounds, options=options)
+    ocp = OCP(N, stage_obj, term_obj, dyn; constraints=constraints, control_limits=cl)
+    solver = Solver(ocp; options=options)
     solver.options.verbose = verbose
         
     # ## Initialise solver and solve

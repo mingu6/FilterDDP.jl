@@ -3,6 +3,7 @@ using LinearAlgebra
 using Random
 using Plots
 using Printf
+using Revise
 
 benchmark = true
 verbose = true
@@ -13,8 +14,8 @@ T = Float64
 N = 101
 x1 = T[0.0; 0.0]
     
-num_state = 2  # position and velocity
-num_control = 3  # pushing force, 2x slacks for + and - components of abs work
+nx = 2  # position and velocity
+nu = 3  # pushing force, 2x slacks for + and - components of abs work
 n_ocp = 1
 
 options = Options{T}(verbose=verbose, optimality_tolerance=1e-7)
@@ -27,9 +28,7 @@ for seed = 1:n_ocp
     # ## Dynamics - forward Euler
 
     f = (x, u) -> x + Δ * [x[2], u[1]]
-
-    blockmove_dyn = Dynamics(f, num_state, num_control)
-    dynamics = [blockmove_dyn for k = 1:N-1]
+    dyn = Dynamics(T, f, nx, nu)
 
     # ## Objective
 
@@ -37,24 +36,23 @@ for seed = 1:n_ocp
     xN_v = T(0.0)
     xN = T[xN_y; xN_v]
 
-    stage_obj = (x, u) -> Δ * (u[2] + u[3])
-    term_obj = (x, u) -> 500.0 * dot(x - xN, x - xN)
-    objective = [[Objective(stage_obj, 2, 3) for k = 1:N-1]..., Objective(term_obj, 2, 3)]
+    l = (x, u) -> Δ * (u[2] + u[3])
+    lN = (x, u) -> 500.0 * dot(x - xN, x - xN)
+    stage_obj = Objective(T, l, nx, nu)
+	term_obj = Objective(T, lN, nx, nu)
 
     # ## Constraints
 
-    path_constr = Constraint((x, u) -> [
+    constraints = Constraints(T, (x, u) -> [
         u[2] - u[3] - u[1] * x[2]
-    ], 2, 3)
-    constraints = [path_constr for k = 1:N]
+    ], nx,  nu)
 
-    # ## Bounds
+    # ## Control Limits
 
-    limit = T(10.0)
-    bound = Bound(T[-limit, 0.0, 0.0], T[limit, Inf, Inf])
-    bounds = [bound for k in 1:N]
+    cl = ControlLimits(T[-10.0, 0.0, 0.0], T[10.0, Inf, Inf])
 
-    solver = Solver(T, dynamics, objective, constraints, bounds, options=options)
+    ocp = OCP(N, stage_obj, term_obj, dyn; constraints=constraints, control_limits=cl)
+    solver = Solver(ocp; options=options)
     solver.options.verbose = verbose
     
     # ## Initialise solver and solve

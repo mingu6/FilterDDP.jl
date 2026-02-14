@@ -3,6 +3,7 @@ using LinearAlgebra
 using Plots
 using Random
 using Printf
+using Revise
 
 benchmark = false
 verbose = true
@@ -13,19 +14,17 @@ T = Float64
 N = 101
 Δ = 0.05
 r_car = 0.02
-
-options = Options{T}(verbose=verbose, optimality_tolerance=1e-7)
+n_ocp = 100
 
 visualise && include("../visualise/concar.jl")
 
-num_state = 4
-num_control = 2
-n_ocp = 100
+options = Options{T}(verbose=verbose, optimality_tolerance=1e-7)
 
 results = Vector{Vector{Any}}()
 params = Vector{Vector{T}}()
 
-for seed = 1:n_ocp
+# for seed = 1:n_ocp
+for seed = 71:71
     Random.seed!(seed)
     
     xN = T[1.0; 1.0; π / 4; 0.0]
@@ -45,8 +44,9 @@ for seed = 1:n_ocp
     obs_4 = T[0.75, 0.25, 0.05] + T[(rand(T) - T(0.5)) * 0.2, (rand(T) - T(0.5)) * 0.2, rand(T) * 0.15]
 
     xyr_obs = [obs_1, obs_2, obs_3, obs_4]
-    num_obstacles = length(xyr_obs)
-    num_primal = num_control + 2 * num_obstacles
+    no = length(xyr_obs)
+    nx = 4
+    nu = 2 + 2 * no
 
     # ## Dynamics - RK2
 
@@ -54,37 +54,30 @@ for seed = 1:n_ocp
     function g(x, u)
         [x[4] * cos(x[3]); x[4] * sin(x[3]); u[2]; u[1]]
     end
-
     function RK2(x, u, g)
         k1 = g(x, u)
         k2 = g(x + Δ * 0.5 * k1, u)
         return x + Δ * k2
     end
-
     f = (x, u) -> RK2(x, u, g)
-
-    car = Dynamics(f, num_state, num_primal)
-    dynamics = [car for k = 1:N-1]
+    dyn = Dynamics(T, f, nx, nu)
 
     # ## objective
 
-    stage_obj = (x, u) -> begin
-        s = u[num_control .+ (1:num_obstacles)]    
+    l = (x, u) -> begin
+        s = u[2 .+ (1:no)]    
         J = 0.0
         J += Δ * dot(u[1:2] .* [5.0, 1.0], u[1:2])
         J += 50.0 * sum(s)
         return J
     end
-    term_obj = (x, u) -> begin
-        s = u[num_control .+ (1:num_obstacles)]  
+    lN = (x, u) -> begin
+        s = u[2 .+ (1:no)]  
         J = 200.0 * dot(x - xN, x - xN)
         J += 50.0 * sum(s)
     end
-
-    objective = [
-        [Objective(stage_obj, num_state, num_primal) for k = 1:N-1]...,
-        Objective(term_obj, num_state, num_primal)
-    ]
+    stage_obj = Objective(T, l, nx, nu)
+	term_obj = Objective(T, lN, nx, nu)
 
     # ## constraints
 
@@ -93,30 +86,28 @@ for seed = 1:n_ocp
         xy_diff = x2d - obs_xy
         return dot(xy_diff, xy_diff)
     end
-    path_constr_fn = (x, u) -> begin
+    c = (x, u) -> begin
     [
         # obstacle avoidance constraints w/slack variable,
         # i.e., d_obs^2 - d_thresh^2 >= 0 and d_obs^2 - d_thresh^2 + s = 0, s >= 0
-        [(obs[3] + r_car)^2 - obs_dist(obs[1:2])(x, u) - u[num_control + i] + u[num_control + num_obstacles + i] 
+        [(obs[3] + r_car)^2 - obs_dist(obs[1:2])(x, u) - u[2+i] + u[2+no+i] 
             for (i, obs) in enumerate(xyr_obs)];
     ]
     end
+    constraints = Constraints(T, c, nx, nu)
 
-    obs_constr = Constraint(path_constr_fn, num_state, num_primal)
-    constraints = [obs_constr for k = 1:N]
-
-    # ## bounds
+    # ## Control Limits
 
     # [control limits; obs slack; bound slack]
-    bound = Bound(
-        [ul; zeros(T, num_obstacles); zeros(T, num_obstacles)],
-        [uu; T(Inf) * ones(T, num_obstacles); T(Inf) * ones(T, num_obstacles)]
+    cl = ControlLimits(
+        [ul; zeros(T, no); zeros(T, no)],
+        [uu; T(Inf) * ones(T, no); T(Inf) * ones(T, no)]
     )
-    bounds = [bound for k in 1:N]
 
     # ## Initialise solver and solve
     
-    solver = Solver(T, dynamics, objective, constraints, bounds, options=options)
+    ocp = OCP(N, stage_obj, term_obj, dyn; constraints=constraints, control_limits=cl)
+    solver = Solver(ocp; options=options)
     solver.options.verbose = verbose
 
     # ## Plots
@@ -129,8 +120,8 @@ for seed = 1:n_ocp
         scatter!([xN[1]], [xN[2]], markershape=:star, color=:gold, markersize=10)
     end
     
-    x1 = T[0.0; 0.0; π / 8; 0.0] + rand(T, num_state) .* T[0.0; 0.0; π / 4; 0.0]
-    ū = [[zeros(T, 2); T(1e-2) * ones(T, 2 * num_obstacles)] for k = 1:N]
+    x1 = T[0.0; 0.0; π / 8; 0.0] + rand(T, nx) .* T[0.0; 0.0; π / 4; 0.0]
+    ū = [[zeros(T, 2); T(1e-2) * ones(T, 2 * no)] for k = 1:N]
 
     solve!(solver, x1, ū)
     

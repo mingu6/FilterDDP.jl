@@ -5,40 +5,28 @@ using Symbolics
 using Printf
 using Crayons
 using FastLapackInterface
+using Revise
 
-include("objectives.jl")
-include("dynamics.jl")
-include("constraints.jl")
-include("bounds.jl")
-include(joinpath("data", "model.jl"))
-include(joinpath("data", "objectives.jl"))
-include(joinpath("data", "constraints.jl"))
-include(joinpath("data", "update_rule.jl"))
-include(joinpath("data", "problem.jl"))
-include(joinpath("data", "solver.jl"))
-include(joinpath("data", "methods.jl"))
+include("workspace.jl")
+include(joinpath("ocp", "objective.jl"))
+include(joinpath("ocp", "dynamics.jl"))
+include(joinpath("ocp", "constraints.jl"))
+include(joinpath("ocp", "control_limits.jl"))
+include(joinpath("ocp", "ocp.jl"))
 include("options.jl")
+include("solver_data.jl")
 include("solver.jl")
-include("derivatives.jl")
 include("inertia_correction.jl")
 include("backward_pass.jl")
 include("forward_pass.jl")
 include("print.jl")
 include("solve.jl")
 
-# costs
 export Objective
-
-# constraints 
-export Constraint
-
-# dynamics 
+export Constraints
 export Dynamics
-
-# bounds
-export Bound
-
-# solver 
+export ControlLimits
+export OCP
 export Solver,
     Options,
     solve!,

@@ -1,106 +1,64 @@
-"""
-    Problem Data
-"""
 mutable struct Solver{T}
-    problem::ProblemData{T}
-    update_rule::UpdateRuleData{T}
+    ocp::OCP{T}
+    ws::FilterDDPWorkspace{T}
 	data::SolverData{T}
     options::Options{T}
 end
 
-function Solver(T, dynamics::Vector{Dynamics}, objectives::Objectives, constraints::Constraints,
-            bounds::Union{Bounds, Nothing}=nothing; options::Union{Options, Nothing}=nothing)
-
-    # allocate update rule data  
-    update_rule = update_rule_data(T, constraints)
-
-    # allocate model data
-    problem = problem_data(T, dynamics, objectives, constraints, bounds)
-
-    # allocate solver data
+function Solver(ocp::OCP{T}; options::Union{Options{T}, Nothing}=nothing) where T
+    ws = FilterDDPWorkspace(ocp)
     data = solver_data(T)
-
     options = isnothing(options) ? Options{T}() : options
-
-	Solver(problem, update_rule, data, options)
-end
-
-function Solver(T, dynamics::Vector{Dynamics}, objectives::Objectives,
-            bounds::Union{Bounds, Nothing}=nothing; options::Union{Options, Nothing}=nothing)
-    constraints = [Constraint(o.num_state, o.num_control) for o in objectives]
-    
-    # allocate update rule data  
-    update_rule = update_rule_data(T, dynamics, constraints)
-
-    # allocate model data
-    problem = problem_data(T, dynamics, objectives, constraints, bounds)
-
-    # allocate solver data
-    data = solver_data(T)
-
-    options = isnothing(options) ? Options{T}() : options
-
-	Solver(T, problem, update_rule, data, options)
+	return Solver(ocp, ws, data, options)
 end
 
 function get_trajectory(solver::Solver{T}) where T
-	return solver.problem.nominal_states, solver.problem.nominal_controls
+    x = [wse.nominal.x for wse in solver.ws]
+    u = [wse.nominal.u for wse in solver.ws]
+	return x, u
 end
 
-function current_trajectory(solver::Solver{T}) where T
-	return solver.problem.states, solver.problem.controls
-end
-
-function initialize_trajectory!(solver::Solver{T}, controls::Vector{Vector{T}}, x1::Vector{T}) where T
-    bounds = solver.problem.bounds
-    dynamics = solver.problem.model.dynamics
+function initialize_trajectory!(solver::Solver{T}, u::Vector{Vector{T}}, x1::Vector{T}) where T
     options = solver.options
-    N = solver.problem.horizon
 
-    solver.problem.nominal_states[1] .= x1
-    ū = solver.problem.nominal_controls
-    x̄ = solver.problem.nominal_states
-    ūl = solver.problem.nominal_ineq_lo
-    ūu = solver.problem.nominal_ineq_up
-
-    u_tmp1 = solver.update_rule.u_tmp1
-    u_tmp2 = solver.update_rule.u_tmp2
-
-    for t = 1:N
-        # project primal variables within Bounds
-
-        nu = length(controls[t])
+    solver.ws[1].nominal.x .= x1
+    for t = 1:solver.ocp.N
+        cl = solver.ocp.control_limits[t]
+        u_tmp1 = solver.ws[t].u_tmp1
+        u_tmp2 = solver.ws[t].u_tmp2
+        ūt = solver.ws[t].nominal.u
+        ūl, ūu = solver.ws[t].nominal.ul, solver.ws[t].nominal.uu
+        nu = solver.ocp.constraints[t].nu
         for i in 1:nu
-            if !isinf(bounds[t].lower[i]) && isinf(bounds[t].upper[i])
-                u_tmp1[t][i] = max(bounds[t].lower[i], 1.0)
-                u_tmp1[t][i] *= options.κ_1
-                u_tmp1[t][i] += bounds[t].lower[i]
-                ū[t][i] = max(controls[t][i], u_tmp1[t][i])
-            elseif !isinf(bounds[t].upper[i]) && isinf(bounds[t].lower[i])
-                u_tmp1[t][i] = max(bounds[t].upper[i], 1.0)
-                u_tmp1[t][i] *= -options.κ_1
-                u_tmp1[t][i] += bounds[t].upper[i]
-                replace!(u_tmp1[t][i], NaN=>Inf)
-                ū[t][i] = min(controls[t][i], u_tmp1[t])
-            elseif !isinf(bounds[t].upper[i]) && !isinf(bounds[t].lower[i])
-                u_tmp1[t][i] = bounds[t].lower[i] + min(options.κ_1 * max(1.0, abs(bounds[t].lower[i])),
-                                    options.κ_2 * (bounds[t].upper[i] - bounds[t].lower[i]))
-                u_tmp2[t][i] = bounds[t].upper[i] - min(options.κ_1 * max(1.0, abs(bounds[t].upper[i])),
-                                    options.κ_2 * (bounds[t].upper[i] - bounds[t].lower[i]))
-                ū[t][i] = min(max(controls[t][i], u_tmp1[t][i]), u_tmp2[t][i])
+            if !isinf(cl.l[i]) && isinf(cl.u[i])
+                u_tmp1[i] = max(cl.l[i], 1.0)
+                u_tmp1[i] *= options.κ_1
+                u_tmp1[i] += cl.l[i]
+                ūt[i] = max(u[t][i], u_tmp1[i])
+            elseif !isinf(cl.u[i]) && isinf(cl.l[i])
+                u_tmp1[i] = max(cl.u[i], 1.0)
+                u_tmp1[i] *= -options.κ_1
+                u_tmp1[i] += cl.u[i]
+                replace!(u_tmp1[i], NaN=>Inf)
+                ūt[i] = min(u[t][i], u_tmp1)
+            elseif !isinf(cl.u[i]) && !isinf(cl.l[i])
+                u_tmp1[i] = cl.l[i] + min(options.κ_1 * max(1.0, abs(cl.l[i])),
+                                    options.κ_2 * (cl.u[i] - cl.l[i]))
+                u_tmp2[i] = cl.u[i] - min(options.κ_1 * max(1.0, abs(cl.u[i])),
+                                    options.κ_2 * (cl.u[i] - cl.l[i]))
+                ūt[i] = min(max(u[t][i], u_tmp1[i]), u_tmp2[i])
             else
-                ū[t][i] = controls[t][i]
+                ūt[i] = u[t][i]
             end
         end
 
         # initialise inequality constraints
+        ūl .= ūt
+        ūl .-= cl.l
+        ūu .= cl.u
+        ūu .-= ūt
 
-        ūl[t] .= ū[t]
-        ūl[t] .-= bounds[t].lower
-        ūu[t] .= bounds[t].upper
-        ūu[t] .-= ū[t]
-
-        t < N && dynamics!(dynamics[t], x̄[t+1], x̄[t], ū[t])
+        t < solver.ocp.N && dynamics!(solver.ocp.dynamics[t], solver.ws[t], solver.ws[t+1]; mode=:nominal)
     end
 end
 
