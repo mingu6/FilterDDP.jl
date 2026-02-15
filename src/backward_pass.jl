@@ -20,6 +20,8 @@ function backward_pass!(ocp::OCP{T}, ws::FilterDDPWorkspace{T}, data::SolverData
             ω = @views ws[t].eq_update_params[nu+1:end, 2:end]
             ζl = @views ws[t].ineq_update_params[1:nu, 2:end]
             ζu = @views ws[t].ineq_update_params[nu+1:end, 2:end]
+            Ĥ = @views ws[t].kkt_mat[1:nu, 1:nu]
+            B = @views ws[t].eq_update_params[1:nu, 2:end]
 
             ws[t].u_tmp1 .= inv.(ws[t].nominal.ul)
             ws[t].u_tmp2 .= inv.(ws[t].nominal.uu)
@@ -33,34 +35,34 @@ function backward_pass!(ocp::OCP{T}, ws::FilterDDPWorkspace{T}, data::SolverData
             # Qû = Lu' -μŪ^{-1}e + fu' * V̂x
             ws[t].Qû .= ocp.objective[t].lu_mem
             mul!(ws[t].Qû, transpose(ocp.constraints[t].cu_mem), ws[t].nominal.ϕ, 1.0, 1.0)
-            t < ocp.N && mul!(ws[t].Qû, transpose(ocp.dynamics[t].fu_mem), ws[t+1].V̄x, 1.0, 1.0)
+            t < ocp.N && mul!(ws[t].Qû, transpose(ocp.dynamics[t].fu_mem), ws[t+1].x_tmp, 1.0, 1.0)
 
             ws[t].Qû .-= χl  # barrier gradient
             ws[t].Qû .+= χu  # barrier gradient
             
             # C = Lxx + fx' * Vxx * fx + V̄x ⋅ fxx
-            ws[t].C .= ocp.objective[t].lxx_mem
+            ws[t].V̂xx .= ocp.objective[t].lxx_mem
             if t < ocp.N
                 mul!(ws[t].xx_tmp, transpose(ocp.dynamics[t].fx_mem), ws[t+1].V̂xx)
-                mul!(ws[t].C, ws[t].xx_tmp, ocp.dynamics[t].fx_mem, 1.0, 1.0)
+                mul!(ws[t].V̂xx, ws[t].xx_tmp, ocp.dynamics[t].fx_mem, 1.0, 1.0)
             end
     
             # Ĥ = Luu + Σ + fu' * Vxx * fu + V̄x ⋅ fuu
             ws[t].u_tmp1 .*= ws[t].nominal.zl   # Σ^L
             ws[t].u_tmp2 .*= ws[t].nominal.zu   # Σ^U
-            fill!(ws[t].Ĥ, 0.0)
+            fill!(Ĥ, 0.0)
             for i = 1:nu
-                ws[t].Ĥ[i, i] = ws[t].u_tmp1[i] + ws[t].u_tmp2[i]
+                Ĥ[i, i] = ws[t].u_tmp1[i] + ws[t].u_tmp2[i]
             end
             if t < ocp.N
                 mul!(ws[t].ux_tmp, transpose(ocp.dynamics[t].fu_mem), ws[t+1].V̂xx)
-                mul!(ws[t].Ĥ, ws[t].ux_tmp, ocp.dynamics[t].fu_mem, 1.0, 1.0)
+                mul!(Ĥ, ws[t].ux_tmp, ocp.dynamics[t].fu_mem, 1.0, 1.0)
             end
-            ws[t].Ĥ .+= ocp.objective[t].luu_mem
+            Ĥ .+= ocp.objective[t].luu_mem
     
             # B = Lux + fu' * Vxx * fx + V̄x ⋅ fxu
-            ws[t].B .= ocp.objective[t].lux_mem
-            t < ocp.N && mul!(ws[t].B, ws[t].ux_tmp, ocp.dynamics[t].fx_mem, 1.0, 1.0)
+            B .= ocp.objective[t].lux_mem
+            t < ocp.N && mul!(B, ws[t].ux_tmp, ocp.dynamics[t].fx_mem, 1.0, 1.0)
             
             # apply second order tensor contraction terms to Q̂uu, Q̂ux, Q̂xx
             if !options.quasi_newton
@@ -68,25 +70,25 @@ function backward_pass!(ocp::OCP{T}, ws::FilterDDPWorkspace{T}, data::SolverData
                     fn_eval_time_ = time()
                     hessians!(ocp.dynamics[t], ws[t], ws[t+1])
                     data.fn_eval_time += time() - fn_eval_time_
-                    ws[t].C .+= ocp.dynamics[t].fxx_mem
-                    ws[t].B .+= ocp.dynamics[t].fux_mem
-                    ws[t].Ĥ .+= ocp.dynamics[t].fuu_mem
+                    ws[t].V̂xx .+= ocp.dynamics[t].fxx_mem
+                    B .+= ocp.dynamics[t].fux_mem
+                    Ĥ .+= ocp.dynamics[t].fuu_mem
                 end
 
-                ws[t].Ĥ .+= ocp.constraints[t].cuu_mem
-                ws[t].B .+= ocp.constraints[t].cux_mem
-                ws[t].C .+= ocp.constraints[t].cxx_mem
+                Ĥ .+= ocp.constraints[t].cuu_mem
+                B .+= ocp.constraints[t].cux_mem
+                ws[t].V̂xx .+= ocp.constraints[t].cxx_mem
             end
             
             # inertia calculation and correction (regularisation)
             if reg > 0.0
                 for i in 1:nu
-                    ws[t].Ĥ[i, i] += reg
+                    Ĥ[i, i] += reg
                 end
             end
 
             # setup linear system in backward pass
-            @views ws[t].kkt_mat[1:nu, 1:nu] .= ws[t].Ĥ
+            # @views ws[t].kkt_mat[1:nu, 1:nu] .= ws[t].Ĥ
             @views ws[t].kkt_mat[1:nu, nu+1:end] .= transpose(ocp.constraints[t].cu_mem)
             @views ws[t].kkt_mat[nu+1:end, nu+1:end] .= 0
 
@@ -94,7 +96,7 @@ function backward_pass!(ocp::OCP{T}, ws::FilterDDPWorkspace{T}, data::SolverData
             α .*= -1.0
             ψ .= ws[t].nominal.c
             ψ .*= -1.0
-            β .= ws[t].B
+            ws[t].ux_tmp .= B  # save B before overwritten by linear solve  
             β .*= -1.0
             ω .= ocp.constraints[t].cx_mem
             ω .*= -1.0
@@ -137,17 +139,17 @@ function backward_pass!(ocp::OCP{T}, ws::FilterDDPWorkspace{T}, data::SolverData
 
             # Update return function approx. for next timestep 
             # Vxx = C + β' * B + ω' cx
-            mul!(ws[t].V̂xx, transpose(β), ws[t].B)
+            mul!(ws[t].V̂xx, transpose(β), ws[t].ux_tmp, 1.0, 1.0)
             mul!(ws[t].V̂xx, transpose(ω), ocp.constraints[t].cx_mem, 1.0, 1.0)
-            ws[t].V̂xx .+= ws[t].C
+            # ws[t].V̂xx .+= ws[t].C
 
             # Vx = Lx' + β' * Qû + ω' c + fx' Vx+
-            ws[t].V̄x .= ocp.objective[t].lx_mem
-            mul!(ws[t].V̄x, transpose(ocp.constraints[t].cx_mem), ws[t].nominal.ϕ, 1.0, 1.0)
-            ws[t].nominal.λ .= ws[t].V̄x
-            mul!(ws[t].V̄x, transpose(β), ws[t].Qû, 1.0, 1.0)
-            mul!(ws[t].V̄x, transpose(ω), ws[t].nominal.c, 1.0, 1.0)
-            t < ocp.N && mul!(ws[t].V̄x, transpose(ocp.dynamics[t].fx_mem), ws[t+1].V̄x, 1.0, 1.0)
+            ws[t].x_tmp .= ocp.objective[t].lx_mem
+            mul!(ws[t].x_tmp, transpose(ocp.constraints[t].cx_mem), ws[t].nominal.ϕ, 1.0, 1.0)
+            ws[t].nominal.λ .= ws[t].x_tmp
+            mul!(ws[t].x_tmp, transpose(β), ws[t].Qû, 1.0, 1.0)
+            mul!(ws[t].x_tmp, transpose(ω), ws[t].nominal.c, 1.0, 1.0)
+            t < ocp.N && mul!(ws[t].x_tmp, transpose(ocp.dynamics[t].fx_mem), ws[t+1].x_tmp, 1.0, 1.0)
 
             # λ = Lx' + fx' λ+
             t < ocp.N && mul!(ws[t].nominal.λ, transpose(ocp.dynamics[t].fx_mem), ws[t+1].nominal.λ, 1.0, 1.0)

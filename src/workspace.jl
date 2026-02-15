@@ -31,21 +31,14 @@ struct FilterDDPWorkspaceElement{T}
     eq_update_params::Matrix{T}    # [α β; ψ ω]
     ineq_update_params::Matrix{T}  # [χ ζ]
     Qû::Vector{T}
-    C::Matrix{T}    # TODO: can i just use tmps and not store C, H etc?
-    B::Matrix{T}
-    Ĥ::Matrix{T}  
-    V̄x::Vector{T}
     V̂xx::Matrix{T}
     # temporary storage for intermediate computations
     x_tmp::Vector{T}
     u_tmp1::Vector{T}
     u_tmp2::Vector{T}
-    c_tmp::Vector{T}
     xx_tmp::Matrix{T}
 	ux_tmp::Matrix{T}
 	uu_tmp::Matrix{T}
-	cx_tmp::Matrix{T}
-	cu_tmp::Matrix{T}
     kkt_mat::Matrix{T}
     kkt_mat_ws::BunchKaufmanWs{T}
     kkt_D_cache::Pair{Vector{T}}
