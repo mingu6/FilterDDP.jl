@@ -253,21 +253,3 @@ function get_D!(F::BunchKaufman{TS}, d::Vector{TS}, e::Vector{TS},
         return Tridiagonal(odu, md, odu)
     end
 end
-
-function factorise_and_reg!(ws::BunchKaufmanWs{T}, kkt_mat::Matrix{T}, D_cache::Pair{Vector{T}},
-                nu::Int64, μ::T, reg::T, reg_last::T, options::Options{T}) where T
-    status = 0
-    δ_c = 0.0
-    Ap, ipiv, info = LAPACK.sytrf_rook!(ws, 'U', kkt_mat)
-    bk = LinearAlgebra.BunchKaufman(Ap, ipiv, 'U', true, true, info)
-    if info > 0
-        δ_c = options.δ_c * μ^options.κ_c
-    end
-    np, _, _ = inertia!(bk, D_cache[1], D_cache[2]; atol=T(options.linsolve_tol))
-    if np != nu || info != 0
-        reg = update_reg(reg, reg_last, options)
-        status = 1
-    end
-    return bk, status, reg, δ_c
-end
-
