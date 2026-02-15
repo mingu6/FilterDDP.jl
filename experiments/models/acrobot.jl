@@ -137,3 +137,71 @@ function implicit_contact_dynamics_slack(model::DoublePendulum{T}, x, u, Δ) whe
     ]
 end
 
+
+function acrobot_explicit(model::DoublePendulum{T}, x, u) where T
+    
+    mass1 = model.m1
+    inertia1 = model.I1
+    length1 = model.l1
+    lengthcom1 = model.lc1
+
+    mass2 = model.m2
+    inertia2 = model.I2
+    length2 = model.l2
+    lengthcom2 = model.lc2
+
+    gravity = model.g
+    friction1 = model.b1
+    friction2 = model.b2
+
+    function M(x)
+        a = (inertia1 + inertia2 + mass2 * length1 * length1
+            + 2.0 * mass2 * length1 * lengthcom2 * cos(x[2]))
+
+        b = inertia2 + mass2 * length1 * lengthcom2 * cos(x[2])
+
+        c = inertia2
+
+        return [a b; b c]
+    end
+
+    function Minv(x) 
+        m = M(x) 
+        a = m[1, 1] 
+        b = m[1, 2] 
+        c = m[2, 1] 
+        d = m[2, 2]
+        1.0 / (a * d - b * c) * [d -b;-c a]
+    end
+
+    function τ(x)
+        a = (-1.0 * mass1 * gravity * lengthcom1 * sin(x[1])
+            - mass2 * gravity * (length1 * sin(x[1])
+            + lengthcom2 * sin(x[1] + x[2])))
+
+        b = -1.0 * mass2 * gravity * lengthcom2 * sin(x[1] + x[2])
+
+        return [a; b]
+    end
+
+    function C(x)
+        a = -2.0 * mass2 * length1 * lengthcom2 * sin(x[2]) * x[4]
+        b = -1.0 * mass2 * length1 * lengthcom2 * sin(x[2]) * x[4]
+        c = mass2 * length1 * lengthcom2 * sin(x[2]) * x[3]
+        d = 0.0
+
+        return [a b; c d]
+    end
+
+    function B(x)
+        [0.0; 1.0]
+    end
+
+    q = view(x, 1:2)
+    v = view(x, 3:4)
+
+    qdd = Minv(q) * (-1.0 * C(x) * v
+            + τ(q) + B(q) * u[1] - [friction1; friction2] .* v)
+
+    return [x[3]; x[4]; qdd[1]; qdd[2]]
+end
