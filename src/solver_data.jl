@@ -9,7 +9,7 @@ mutable struct SolverData{T}
     max_primal_1::T               # maximum allowable 1-norm of constraint violation (IPOPT θ_max)
     min_primal_1::T               # minimum 1-norm of constraint violation (IPOPT θ_min) 
     step_size::T                  # current step size for line search
-    status::Int                  # solver status
+    status::Int                   # solver status
     j::Int                        # outer iteration counter (i.e., j-th barrier subproblem)
     k::Int                        # overall iteration counter
     l::Int                        # line search iteration counter

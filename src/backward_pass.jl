@@ -68,7 +68,11 @@ function backward_pass!(ocp::OCP{T}, ws::FilterDDPWorkspace{T}, data::SolverData
             if !options.quasi_newton
                 if t < ocp.N
                     fn_eval_time_ = time()
-                    hessians!(ocp.dynamics[t], ws[t], ws[t+1])
+                    if ocp.no_eq_constr
+                        hessians!(ocp.dynamics[t], ws[t], ws[t+1].x_tmp)
+                    else
+                        hessians!(ocp.dynamics[t], ws[t], ws[t+1].nominal.λ)
+                    end
                     data.fn_eval_time += time() - fn_eval_time_
                     ws[t].V̂xx .+= ocp.dynamics[t].fxx_mem
                     B .+= ocp.dynamics[t].fux_mem
@@ -106,12 +110,22 @@ function backward_pass!(ocp::OCP{T}, ws::FilterDDPWorkspace{T}, data::SolverData
                     @views ws[t].kkt_mat[nu+1:end, nu+1:end][i, i] -= δ_c
                 end
             end
-        
-            bk, data.status, reg, δ_c = inertia_correction!(ws[t].kkt_mat_ws, ws[t].kkt_mat,
-                                ws[t].kkt_D_cache, nu, μ, reg, data.reg_last, options)
-            data.status != 0 && break
+            
+            data.status, info, rank = ocp.no_eq_constr ? factorise!(
+                ws[t].kkt_mat_ws, ws[t].kkt_mat, options.linsolve_tol) : factorise!(
+                    ws[t].kkt_mat_ws, ws[t].kkt_mat, ws[t].kkt_D_cache, nu, options.linsolve_tol)   
+            fct = ocp.no_eq_constr ? LinearAlgebra.CholeskyPivoted(
+                    ws[t].kkt_mat, 'U', ws[t].kkt_mat_ws.piv, rank, options.linsolve_tol, info) :
+                    LinearAlgebra.BunchKaufman(ws[t].kkt_mat, ws[t].kkt_mat_ws.ipiv, 'U', true, true, info)
 
-            ldiv!(bk, ws[t].eq_update_params)
+            if data.status == 2
+                δ_c = options.δ_c * μ^options.κ_c
+                break
+            elseif data.status == 1 
+                reg = update_reg(reg, data.reg_last, options)
+                break
+            end
+            ldiv!(fct, ws[t].eq_update_params)
 
             # update parameters of update rule for ineq. dual variables, i.e., 
 
@@ -158,4 +172,31 @@ function backward_pass!(ocp::OCP{T}, ws::FilterDDPWorkspace{T}, data::SolverData
     end
     data.reg_last = reg
     data.status != 0 && (verbose && (@warn "Backward pass failure, unable to find an iteration matrix with correct inertia."))
+end
+
+function factorise!(ws::BunchKaufmanWs{T}, kkt_mat::Matrix{T}, D_cache::Pair{Vector{T}}, nu::Int64, tol::T) where T
+    kkt_mat, ipiv, info = LAPACK.sytrf_rook!(ws, 'U', kkt_mat)
+    bk = LinearAlgebra.BunchKaufman(kkt_mat, ipiv, 'U', true, true, info)
+    info > 0 && return 2, info, 0      # K is singular (constraint Jacobian may be not full row rank), add bottom right diagonal
+    np, _, _ = inertia!(bk, D_cache[1], D_cache[2]; atol=tol)
+    (np != nu || info < 0) && return 1, info, 0
+    return 0, info, 0
+end
+
+function factorise!(ws::CholeskyPivotedWs{T}, kkt_mat::Matrix{T}, tol::T) where T
+    _, piv, rank, info = LinearAlgebra.LAPACK.pstrf!(ws, 'U', kkt_mat, tol)
+    if info == 0
+        return 0, info, rank
+    else
+        return 1, info, rank
+    end
+end
+
+function update_reg(reg::T, reg_last::T, options::Options{T}) where T
+    if iszero(reg) # initial setting of regularisation
+        reg = (reg_last == 0.0) ? options.reg_1 : max(options.reg_min, options.κ_w_m * reg_last)
+    else
+        reg = (reg_last == 0.0) ? options.κ_̄w_p * reg : options.κ_w_p * reg
+    end
+    return reg
 end

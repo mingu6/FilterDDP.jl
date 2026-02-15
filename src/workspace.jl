@@ -40,7 +40,7 @@ struct FilterDDPWorkspaceElement{T}
 	ux_tmp::Matrix{T}
 	uu_tmp::Matrix{T}
     kkt_mat::Matrix{T}
-    kkt_mat_ws::BunchKaufmanWs{T}
+    kkt_mat_ws::Union{BunchKaufmanWs{T}, CholeskyPivotedWs{T}}
     kkt_D_cache::Pair{Vector{T}}
 end
 

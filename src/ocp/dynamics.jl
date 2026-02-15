@@ -94,16 +94,16 @@ function jacobians!(dynamics_vec::Vector{Dynamics{T}}, ws::FilterDDPWorkspace{T}
     end
 end
 
-function hessians!(dynamics::Dynamics{T}, wse::FilterDDPWorkspaceElement{T}, wse1::FilterDDPWorkspaceElement{T}; mode=:nominal) where T
+function hessians!(dynamics::Dynamics{T}, wse::FilterDDPWorkspaceElement{T}, adj::Vector{T}; mode=:nominal) where T
     if !isnothing(dynamics.fuu)  # do nothing if Gauss-Newton
         if mode == :nominal
-            dynamics.fxx(dynamics.fxx_mem, wse.nominal.x, wse.nominal.u, wse1.nominal.λ)
-            dynamics.fux(dynamics.fux_mem, wse.nominal.x, wse.nominal.u, wse1.nominal.λ)
-            dynamics.fuu(dynamics.fuu_mem, wse.nominal.x, wse.nominal.u, wse1.nominal.λ)
+            dynamics.fxx(dynamics.fxx_mem, wse.nominal.x, wse.nominal.u, adj)
+            dynamics.fux(dynamics.fux_mem, wse.nominal.x, wse.nominal.u, adj)
+            dynamics.fuu(dynamics.fuu_mem, wse.nominal.x, wse.nominal.u, adj)
         else
-            dynamics.fxx(dynamics.fxx_mem, wse.current.x, wse.current.u, wse1.current.λ)
-            dynamics.fux(dynamics.fux_mem, wse.current.x, wse.current.u, wse1.current.λ)
-            dynamics.fuu(dynamics.fuu_mem, wse.current.x, wse.current.u, wse1.current.λ)
+            dynamics.fxx(dynamics.fxx_mem, wse.current.x, wse.current.u, adj)
+            dynamics.fux(dynamics.fux_mem, wse.current.x, wse.current.u, adj)
+            dynamics.fuu(dynamics.fuu_mem, wse.current.x, wse.current.u, adj)
         end
     end
 end
