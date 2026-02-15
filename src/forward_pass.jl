@@ -86,8 +86,10 @@ function expected_change_lagrangian(ws::FilterDDPWorkspace{T}) where T
     ΔL = T(0.0)
     for wse in ws
         nu = length(wse.Qû)
-        ΔL += dot(wse.Qû, wse.eq_update_params[1:nu, 1])
-        ΔL += dot(wse.nominal.c, wse.eq_update_params[nu+1:end, 1])
+        α = @views wse.eq_update_params[1:nu, 1]
+        ψ = @views wse.eq_update_params[nu+1:end, 1]
+        ΔL += dot(wse.Qû, α)
+        ΔL += dot(wse.nominal.c, ψ)
     end
     return ΔL
 end
