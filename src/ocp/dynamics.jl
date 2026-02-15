@@ -24,21 +24,21 @@ function _Dynamics(method::DiffMethod, T, f::Function, nx::Int, nu::Int; quasi_n
     x = Symbolics.variables(:x, 1:nx)
     u = Symbolics.variables(:u, 1:nu)
 
-    y = f(x, u)
+    y = Symbolics.simplify(f(x, u))
     nx1 = length(y)
     λ = Symbolics.variables(:λ, 1:nx1)  # vector variables for Hessian vector products
     
-    fx = Symbolics.jacobian(y, x)
-    fu = Symbolics.jacobian(y, u)
+    fx = Symbolics.simplify(Symbolics.jacobian(y, x))
+    fu = Symbolics.simplify(Symbolics.jacobian(y, u))
     f_func = eval(Symbolics.build_function(y, x, u)[2])
     fx_func = eval(
         Symbolics._build_function(Symbolics.JuliaTarget(), fx, x, u; skipzeros=true)[2])
     fu_func = eval(
         Symbolics._build_function(Symbolics.JuliaTarget(), fu, x, u; skipzeros=true)[2])
     if !quasi_newton
-        fxx = sum([λ[i] .* Symbolics.hessian(y[i], x) for i in 1:nx1])
-        fux = sum([λ[i] .* Symbolics.jacobian(Symbolics.gradient(y[i], u), x) for i in 1:nx1])
-        fuu = sum([λ[i] .* Symbolics.hessian(y[i], u) for i in 1:nx1])
+        fxx = Symbolics.simplify(Symbolics.hessian(λ' * y, x))
+        fux = Symbolics.simplify(Symbolics.jacobian(Symbolics.gradient(λ' * y, u), x))
+        fuu = Symbolics.simplify(Symbolics.hessian(λ' * y, u))
         fxx_func = eval(
             Symbolics._build_function(Symbolics.JuliaTarget(), fxx, x, u, λ; skipzeros=true)[2])
         fux_func = eval(

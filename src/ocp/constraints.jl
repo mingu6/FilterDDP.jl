@@ -24,9 +24,9 @@ function _Constraints(method::DiffMethod, T, c::Function, nx::Int, nu::Int; quas
     x = Symbolics.variables(:x, 1:nx)
     u = Symbolics.variables(:u, 1:nu)
 
-    c_ = c(x, u)
-    cx = Symbolics.jacobian(c_, x)
-    cu = Symbolics.jacobian(c_, u)
+    c_ = Symbolics.simplify(c(x, u))
+    cx = Symbolics.simplify(Symbolics.jacobian(c_, x))
+    cu = Symbolics.simplify(Symbolics.jacobian(c_, u))
     nc = length(c_)
 
     c_func = eval(
@@ -38,9 +38,9 @@ function _Constraints(method::DiffMethod, T, c::Function, nx::Int, nu::Int; quas
     
     ϕ = Symbolics.variables(:ϕ, 1:nc)  # adjoint for second-order tensor contraction
     if !quasi_newton && nc > 0
-        cxx = Symbolics.jacobian(cx' * ϕ, x)
-        cux = Symbolics.jacobian(cu' * ϕ, x)
-        cuu = Symbolics.jacobian(cu' * ϕ, u)
+        cxx = Symbolics.simplify(Symbolics.hessian(c_' * ϕ, x))
+        cux = Symbolics.simplify(Symbolics.jacobian(cu' * ϕ, x))
+        cuu = Symbolics.simplify(Symbolics.hessian(c_' * ϕ, u))
         cxx_func = eval(
             Symbolics._build_function(Symbolics.JuliaTarget(), cxx, x, u, ϕ; skipzeros=true)[2])
         cux_func = eval(

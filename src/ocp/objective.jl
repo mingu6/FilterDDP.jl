@@ -26,12 +26,12 @@ function _Objective(method::DiffMethod, T, l::Function, nx::Int, nu::Int)
     x = Symbolics.variables(:x, 1:nx)
     u = Symbolics.variables(:u, 1:nu)
 
-    l_ = l(x, u)
-    lx = Symbolics.gradient(l_, x)
-    lu = Symbolics.gradient(l_, u)
-    lxx = Symbolics.jacobian(lx, x)
-    lux = Symbolics.jacobian(lu, x)
-    luu = Symbolics.jacobian(lu, u)
+    l_ = Symbolics.simplify(l(x, u))
+    lx = Symbolics.simplify(Symbolics.gradient(l_, x))
+    lu = Symbolics.simplify(Symbolics.gradient(l_, u))
+    lxx = Symbolics.simplify(Symbolics.jacobian(lx, x))
+    lux = Symbolics.simplify(Symbolics.jacobian(lu, x))
+    luu = Symbolics.simplify(Symbolics.jacobian(lu, u))
 
     l_func = eval(
         Symbolics._build_function(Symbolics.JuliaTarget(), [l_], x, u; skipzeros=true)[2])
