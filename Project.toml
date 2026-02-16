@@ -1,5 +1,6 @@
 name = "FilterDDP"
 uuid = "3fc7acb0-3ec8-433f-906a-2d1e86d217d2"
+authors = ["Mingda Xu"]
 version = "0.6.0"
 
 [deps]
