@@ -1,6 +1,6 @@
 # FilterDDP.jl - Constrained Differential Dynamic Programming
 
-This repository contains a Julia package for solving constrained optimal control problems (OCPs) with our proposed FilterDDP algorithm. The associated research paper (accepted to ICRA 2026!) is located at https://arxiv.org/abs/2504.08278.
+This repository contains a Julia package for solving constrained optimal control problems (OCPs) with our proposed FilterDDP algorithm. The associated research paper **(accepted to ICRA 2026!)** is located at https://arxiv.org/abs/2504.08278.
 
 FilterDDP is a Differential Dynamic Programming (DDP) algorithm for solving a general class of optimal control problems with nonlinear equality constraints in addition to the discrete-time dynamics. A line-search filter approach is taken to handle these equality constraints. 
 
