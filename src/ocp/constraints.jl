@@ -20,7 +20,7 @@ function Constraints(T, c::Function, nx::Int, nu::Int; method::DiffMethod=Symbol
     return _Constraints(method, T, c, nx, nu; quasi_newton=quasi_newton)
 end
 
-function _Constraints(method::DiffMethod, T, c::Function, nx::Int, nu::Int; quasi_newton::Bool=false)
+function _Constraints(method::Symbolic, T, c::Function, nx::Int, nu::Int; quasi_newton::Bool=false)
     x = Symbolics.variables(:x, 1:nx)
     u = Symbolics.variables(:u, 1:nu)
 

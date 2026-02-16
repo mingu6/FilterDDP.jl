@@ -22,7 +22,7 @@ function Objective(T, l::Function, nx::Int, nu::Int; method::DiffMethod=Symbolic
     return _Objective(method, T, l, nx, nu)
 end
 
-function _Objective(method::DiffMethod, T, l::Function, nx::Int, nu::Int)
+function _Objective(method::Symbolic, T, l::Function, nx::Int, nu::Int)
     x = Symbolics.variables(:x, 1:nx)
     u = Symbolics.variables(:u, 1:nu)
 

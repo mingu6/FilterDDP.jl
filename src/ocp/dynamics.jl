@@ -20,7 +20,7 @@ function Dynamics(T, f::Function, nx::Int, nu::Int; method::DiffMethod=Symbolic(
     return _Dynamics(method, T, f, nx, nu; quasi_newton=quasi_newton)
 end
 
-function _Dynamics(method::DiffMethod, T, f::Function, nx::Int, nu::Int; quasi_newton::Bool=false)
+function _Dynamics(method::Symbolic, T, f::Function, nx::Int, nu::Int; quasi_newton::Bool=false)
     x = Symbolics.variables(:x, 1:nx)
     u = Symbolics.variables(:u, 1:nu)
 
