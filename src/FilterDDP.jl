@@ -5,7 +5,6 @@ using Symbolics
 using Printf
 using Crayons
 using FastLapackInterface
-using Revise
 
 include("workspace.jl")
 include(joinpath("ocp", "objective.jl"))
