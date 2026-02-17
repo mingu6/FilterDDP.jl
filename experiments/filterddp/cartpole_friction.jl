@@ -5,7 +5,6 @@ using Plots
 using MeshCat
 using Printf
 using LaTeXStrings
-using Revise
 
 visualise = false
 benchmark = false
@@ -78,7 +77,7 @@ for seed = 1:n_ocp
     # ## Constraints
 
     c = (x, u) -> implicit_contact_dynamics_slack(cartpole, x, u, Δ)
-    constraints = Constraints(T, c, nx, nu)
+    constraints = EqualityConstraints(T, c, nx, nu)
 
     # ## Control Limits
 

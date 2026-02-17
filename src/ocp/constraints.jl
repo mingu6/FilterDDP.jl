@@ -1,4 +1,4 @@
-struct Constraints{T}
+struct EqualityConstraints{T}
     nx::Int
     nu::Int
     nc::Int
@@ -16,11 +16,11 @@ struct Constraints{T}
     cuu_mem::Matrix{T}
 end
 
-function Constraints(T, c::Function, nx::Int, nu::Int; method::DiffMethod=Symbolic(), quasi_newton::Bool=false)
-    return _Constraints(method, T, c, nx, nu; quasi_newton=quasi_newton)
+function EqualityConstraints(T, c::Function, nx::Int, nu::Int; method::DiffMethod=Symbolic(), quasi_newton::Bool=false)
+    return _EqualityConstraints(method, T, c, nx, nu; quasi_newton=quasi_newton)
 end
 
-function _Constraints(method::Symbolic, T, c::Function, nx::Int, nu::Int; quasi_newton::Bool=false)
+function _EqualityConstraints(method::Symbolic, T, c::Function, nx::Int, nu::Int; quasi_newton::Bool=false)
     x = Symbolics.variables(:x, 1:nx)
     u = Symbolics.variables(:u, 1:nu)
 
@@ -60,26 +60,26 @@ function _Constraints(method::Symbolic, T, c::Function, nx::Int, nu::Int; quasi_
     cux_mem = zeros(T, nu, nx)
     cuu_mem = zeros(T, nu, nu)
 
-    return Constraints{T}(nx, nu, nc, c_func, cx_func, cu_func, cxx_func, cux_func, cuu_func,
+    return EqualityConstraints{T}(nx, nu, nc, c_func, cx_func, cu_func, cxx_func, cux_func, cuu_func,
                         c_mem, cx_mem, cu_mem, cxx_mem, cux_mem, cuu_mem)
 end
 
-function Constraints(T, nx::Int, nu::Int)
-    return Constraints{T}(nx, nu, 0,
+function EqualityConstraints(T, nx::Int, nu::Int)
+    return EqualityConstraints{T}(nx, nu, 0,
         (mem, x, u) -> nothing, (mem, x, u) -> nothing, (mem, x, u) -> nothing,
         (mem, x, u, λ) -> nothing, (mem, x, u, λ) -> nothing, (mem, x, u, λ) -> nothing,
         zeros(T, 0), zeros(T, 0, nx), zeros(T, 0, nu), zeros(T, nx, nx), zeros(T, nu, nx), zeros(T, nu, nu))
 end
 
-# user-provided constraints and derivatives
-function Constraints(T, nx::Int, nu::Int, nc::Int, c::Function, cx::Function, cu::Function;
+# user-provided EqualityConstraints and derivatives
+function EqualityConstraints(T, nx::Int, nu::Int, nc::Int, c::Function, cx::Function, cu::Function;
     cxx::Function=nothing, cux::Function=nothing, cuu::Function=nothing)
-    return Constraints{T}(nx, nu, nc, c, cx, cu, cxx, cux, cuu,
+    return EqualityConstraints{T}(nx, nu, nc, c, cx, cu, cxx, cux, cuu,
                         zeros(T, nc), zeros(T, nc, nx), zeros(T, nc, nu),
                         zeros(T, nx, nx), zeros(T, nu, nx), zeros(T, nu, nu))
 end
 
-function constraints!(constraints_vec::Vector{Constraints{T}}, ws::FilterDDPWorkspace{T}; mode=:nominal) where T
+function constraints!(constraints_vec::Vector{EqualityConstraints{T}}, ws::FilterDDPWorkspace{T}; mode=:nominal) where T
     if mode == :nominal
         for (constraints, wse) in zip(constraints_vec, ws)
             if constraints.nc > 0
@@ -95,7 +95,7 @@ function constraints!(constraints_vec::Vector{Constraints{T}}, ws::FilterDDPWork
     end
 end
 
-function jacobians!(constraints_vec::Vector{Constraints{T}}, ws::FilterDDPWorkspace{T}; mode=:nominal) where T
+function jacobians!(constraints_vec::Vector{EqualityConstraints{T}}, ws::FilterDDPWorkspace{T}; mode=:nominal) where T
     for (t, (constraints, wse)) in enumerate(zip(constraints_vec, ws))
         if constraints.nc > 0
             if mode == :nominal
@@ -109,7 +109,7 @@ function jacobians!(constraints_vec::Vector{Constraints{T}}, ws::FilterDDPWorksp
     end
 end
 
-function hessians!(constraints_vec::Vector{Constraints{T}}, ws::FilterDDPWorkspace{T}; mode=:nominal) where T
+function hessians!(constraints_vec::Vector{EqualityConstraints{T}}, ws::FilterDDPWorkspace{T}; mode=:nominal) where T
     if mode == :nominal
         for (constraints, wse) in zip(constraints_vec, ws)
             if !isnothing(constraints.cuu)  # do nothing if Gauss-Newton
@@ -129,7 +129,7 @@ function hessians!(constraints_vec::Vector{Constraints{T}}, ws::FilterDDPWorkspa
     end
 end
 
-function reset_mem!(constraints_vec::Vector{Constraints{T}}) where T
+function reset_mem!(constraints_vec::Vector{EqualityConstraints{T}}) where T
     for constraints in constraints_vec
         fill!(constraints.c_mem, 0.0)
         fill!(constraints.cx_mem, 0.0)

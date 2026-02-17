@@ -5,7 +5,6 @@ using Plots
 using MeshCat
 using Printf
 using LaTeXStrings
-using Revise
 
 visualise = false
 benchmark = false
@@ -123,7 +122,7 @@ for seed = 1:n_ocp
         ]
     end
 
-    constraints = Constraints(T, c, nx, nu)
+    constraints = EqualityConstraints(T, c, nx, nu)
 
     # ## Control Limits
 

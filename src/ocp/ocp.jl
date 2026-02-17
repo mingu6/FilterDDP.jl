@@ -5,19 +5,19 @@ struct OCP{T}
     nc::Vector{Int}
     objective::Vector{Objective{T}}
     dynamics::Vector{Dynamics{T}};
-    constraints::Vector{Constraints{T}}
+    constraints::Vector{EqualityConstraints{T}}
     control_limits::Vector{ControlLimits{T}}
     no_eq_constr::Bool
 end
 
 function OCP(objective::Vector{Objective{T}}, dynamics::Vector{Dynamics{T}};
-    constraints::Union{Vector{Constraints{T}}, Nothing} = nothing,
+    constraints::Union{Vector{EqualityConstraints{T}}, Nothing} = nothing,
     control_limits::Union{Vector{ControlLimits{T}}, Nothing} = nothing) where T
     
     no_eq_constr = false
     N = length(objective)
     if isnothing(constraints)
-        constraints = [Constraints(T, o.nx, o.nu) for o in objective]
+        constraints = [EqualityConstraints(T, o.nx, o.nu) for o in objective]
         no_eq_constr = true
     end
     if isnothing(control_limits)
@@ -42,7 +42,7 @@ function OCP(objective::Vector{Objective{T}}, dynamics::Vector{Dynamics{T}};
 end
 
 function OCP(N::Int, stage_objective::Objective{T}, term_objective::Objective{T}, dynamics::Dynamics{T};
-        constraints::Union{Constraints{T}, Nothing} = nothing,
+        constraints::Union{EqualityConstraints{T}, Nothing} = nothing,
         control_limits::Union{ControlLimits{T}, Nothing} = nothing) where T
     if !isnothing(control_limits)
         control_limits = [deepcopy(control_limits) for _ = 1:N ]

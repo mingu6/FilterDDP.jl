@@ -3,7 +3,6 @@ using LinearAlgebra
 using Plots
 using Random
 using Printf
-using Revise
 
 benchmark = false
 verbose = true
@@ -23,8 +22,7 @@ options = Options{T}(verbose=verbose, optimality_tolerance=1e-7)
 results = Vector{Vector{Any}}()
 params = Vector{Vector{T}}()
 
-# for seed = 1:n_ocp
-for seed = 71:71
+for seed = 1:n_ocp
     Random.seed!(seed)
     
     xN = T[1.0; 1.0; π / 4; 0.0]
@@ -79,7 +77,7 @@ for seed = 71:71
     stage_obj = Objective(T, l, nx, nu)
 	term_obj = Objective(T, lN, nx, nu)
 
-    # ## constraints
+    # ## Constraints
 
     obs_dist(obs_xy) = (x, u) -> begin
         x2d = x[1:2]
@@ -94,7 +92,7 @@ for seed = 71:71
             for (i, obs) in enumerate(xyr_obs)];
     ]
     end
-    constraints = Constraints(T, c, nx, nu)
+    constraints = EqualityConstraints(T, c, nx, nu)
 
     # ## Control Limits
 

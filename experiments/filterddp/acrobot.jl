@@ -12,7 +12,7 @@ benchmark = false
 verbose = true
 n_benchmark = 10
 integrator = "Euler"
-control_limits = true
+control_limits = false
 
 T = Float64
 Δ = 0.02

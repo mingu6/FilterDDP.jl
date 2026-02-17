@@ -3,7 +3,6 @@ using LinearAlgebra
 using Plots
 using Random
 using Printf
-using Revise
 
 benchmark = false
 verbose = true
@@ -77,7 +76,7 @@ for seed = 1:n_ocp
     stage_obj = Objective(T, l, nx, nu)
 	term_obj = Objective(T, lN, nx, nu)
 
-    # ## constraints
+    # ## Constraints
 
     obs_dist(obs_xy) = (x, u) -> begin
         x2d = x[1:2]
@@ -92,7 +91,7 @@ for seed = 1:n_ocp
             for (i, obs) in enumerate(xyr_obs)];
     ]
     end
-    constraints = Constraints(T, c, nx, nu)
+    constraints = EqualityConstraints(T, c, nx, nu)
 
     # ## Control Limits
 

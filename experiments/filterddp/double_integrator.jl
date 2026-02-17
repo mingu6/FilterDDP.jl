@@ -3,7 +3,6 @@ using LinearAlgebra
 using Random
 using Plots
 using Printf
-using Revise
 
 benchmark = true
 verbose = true
@@ -43,7 +42,7 @@ for seed = 1:n_ocp
 
     # ## Constraints
 
-    constraints = Constraints(T, (x, u) -> [
+    constraints = EqualityConstraints(T, (x, u) -> [
         u[2] - u[3] - u[1] * x[2]
     ], nx,  nu)
 

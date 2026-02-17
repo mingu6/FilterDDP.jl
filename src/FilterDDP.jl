@@ -22,7 +22,7 @@ include("print.jl")
 include("solve.jl")
 
 export Objective
-export Constraints
+export EqualityConstraints
 export Dynamics
 export ControlLimits
 export OCP
