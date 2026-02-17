@@ -22,11 +22,11 @@ where $\mathbf{x} = (x_1, \dots, x_{N})$ is the state trajectory and $\mathbf{u}
 
 - The size of the state and control vectors may vary across timesteps.
 
-## Inequality Constraints
+## Nonlinear Inequality Constraints
 
 FilterDDP is able to handle nonlinear inequality constraints for the form $b_L \leq g^t(x_t, \tilde{u}_t) \leq b_U$ through the inclusion of slack variables, i.e., let $u_t = (\tilde{u}_t^\top, s_t)^\top$ and replace the aforementioned nonlinear inequality constraints with equality constraints $g^t(x_t, \tilde{u}_t) - s_t = 0$ and control limits $b^L_t \leq s_t \leq b^U_t$.
 
-## Unconstrained Differential Dynamic Programming
+## Unconstrained (and Bound Constrained) Differential Dynamic Programming
 
 FilterDDP.jl also provides an efficient Julia implmentation of both the unconstrained DDP algorithm by Mayne et al. (1970) and the Interior Point DDP (IPDDP) algorithm by [Pavlov et al. (2021)](https://ieeexplore.ieee.org/document/9332234) specialised to control limits only. The unconstrained DDP algorithm is applied when neither equality nor inequality constraints are added and IPDDP is applied when only control limits are added. In both cases, the dynamics dual variable as defined by (8) and (13) in the FilterDDP paper are replaced with the value function gradient $\bar{V}_x^t$ due to improved numerical performance overall.
 
