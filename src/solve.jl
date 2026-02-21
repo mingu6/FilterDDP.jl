@@ -1,6 +1,7 @@
 function solve!(solver::Solver{T}, x1::Vector{T}, u::Vector{Vector{T}}; kwargs...) where T
     initialize_trajectory!(solver, u, x1)
-    solve!(solver; kwargs...)
+    status = solve!(solver; kwargs...)
+    return status
 end
 
 function solve!(solver::Solver{T}) where T
@@ -90,6 +91,7 @@ function solve!(solver::Solver{T}) where T
     data.k == options.max_iterations && (data.status = 8)
     options.verbose && iteration_status(data, options)
     options.verbose && on_exit(data)
+    return data.status
 end
 
 function update_filter!(data::SolverData{T}, options::Options{T}) where T
