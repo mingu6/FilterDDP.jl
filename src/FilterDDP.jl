@@ -5,6 +5,8 @@ using Symbolics
 using Printf
 using Crayons
 using FastLapackInterface
+using RuntimeGeneratedFunctions
+RuntimeGeneratedFunctions.init(@__MODULE__)
 
 include("workspace.jl")
 include(joinpath("ocp", "objective.jl"))

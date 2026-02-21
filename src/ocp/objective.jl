@@ -33,17 +33,17 @@ function _Objective(method::Symbolic, T, l::Function, nx::Int, nu::Int)
     lux = Symbolics.simplify(Symbolics.jacobian(lu, x))
     luu = Symbolics.simplify(Symbolics.jacobian(lu, u))
 
-    l_func = eval(
+    l_func = @RuntimeGeneratedFunction(
         Symbolics._build_function(Symbolics.JuliaTarget(), [l_], x, u; skipzeros=true)[2])
-    lx_func = eval(
+    lx_func = @RuntimeGeneratedFunction(
         Symbolics._build_function(Symbolics.JuliaTarget(), lx, x, u; skipzeros=true)[2])
-    lu_func = eval(
+    lu_func = @RuntimeGeneratedFunction(
         Symbolics._build_function(Symbolics.JuliaTarget(), lu, x, u; skipzeros=true)[2])
-    lxx_func = eval(
+    lxx_func = @RuntimeGeneratedFunction(
         Symbolics._build_function(Symbolics.JuliaTarget(), lxx, x, u; skipzeros=true)[2])
-    lux_func = eval(
+    lux_func = @RuntimeGeneratedFunction(
         Symbolics._build_function(Symbolics.JuliaTarget(), lux, x, u; skipzeros=true)[2])
-    luu_func = eval(
+    luu_func = @RuntimeGeneratedFunction(
         Symbolics._build_function(Symbolics.JuliaTarget(), luu, x, u; skipzeros=true)[2])
 
     lx_mem = zeros(T, nx)

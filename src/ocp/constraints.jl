@@ -29,11 +29,11 @@ function _EqualityConstraints(method::Symbolic, T, c::Function, nx::Int, nu::Int
     cu = Symbolics.simplify(Symbolics.jacobian(c_, u))
     nc = length(c_)
 
-    c_func = eval(
+    c_func = @RuntimeGeneratedFunction(
         Symbolics._build_function(Symbolics.JuliaTarget(), c_, x, u; skipzeros=true)[2])
-    cx_func = eval(
+    cx_func = @RuntimeGeneratedFunction(
         Symbolics._build_function(Symbolics.JuliaTarget(), cx, x, u; skipzeros=true)[2])
-    cu_func = eval(
+    cu_func = @RuntimeGeneratedFunction(
         Symbolics._build_function(Symbolics.JuliaTarget(), cu, x, u; skipzeros=true)[2])
     
     ϕ = Symbolics.variables(:ϕ, 1:nc)  # adjoint for second-order tensor contraction
@@ -41,11 +41,11 @@ function _EqualityConstraints(method::Symbolic, T, c::Function, nx::Int, nu::Int
         cxx = Symbolics.simplify(Symbolics.hessian(c_' * ϕ, x))
         cux = Symbolics.simplify(Symbolics.jacobian(cu' * ϕ, x))
         cuu = Symbolics.simplify(Symbolics.hessian(c_' * ϕ, u))
-        cxx_func = eval(
+        cxx_func = @RuntimeGeneratedFunction(
             Symbolics._build_function(Symbolics.JuliaTarget(), cxx, x, u, ϕ; skipzeros=true)[2])
-        cux_func = eval(
+        cux_func = @RuntimeGeneratedFunction(
             Symbolics._build_function(Symbolics.JuliaTarget(), cux, x, u, ϕ; skipzeros=true)[2])
-        cuu_func = eval(
+        cuu_func = @RuntimeGeneratedFunction(
             Symbolics._build_function(Symbolics.JuliaTarget(), cuu, x, u, ϕ; skipzeros=true)[2])
     else
         cxx_func = nothing

@@ -30,20 +30,20 @@ function _Dynamics(method::Symbolic, T, f::Function, nx::Int, nu::Int; quasi_new
     
     fx = Symbolics.simplify(Symbolics.jacobian(y, x))
     fu = Symbolics.simplify(Symbolics.jacobian(y, u))
-    f_func = eval(Symbolics.build_function(y, x, u)[2])
-    fx_func = eval(
+    f_func = @RuntimeGeneratedFunction(Symbolics.build_function(y, x, u)[2])
+    fx_func = @RuntimeGeneratedFunction(
         Symbolics._build_function(Symbolics.JuliaTarget(), fx, x, u; skipzeros=true)[2])
-    fu_func = eval(
+    fu_func = @RuntimeGeneratedFunction(
         Symbolics._build_function(Symbolics.JuliaTarget(), fu, x, u; skipzeros=true)[2])
     if !quasi_newton
         fxx = Symbolics.simplify(Symbolics.hessian(λ' * y, x))
         fux = Symbolics.simplify(Symbolics.jacobian(Symbolics.gradient(λ' * y, u), x))
         fuu = Symbolics.simplify(Symbolics.hessian(λ' * y, u))
-        fxx_func = eval(
+        fxx_func = @RuntimeGeneratedFunction(
             Symbolics._build_function(Symbolics.JuliaTarget(), fxx, x, u, λ; skipzeros=true)[2])
-        fux_func = eval(
+        fux_func = @RuntimeGeneratedFunction(
             Symbolics._build_function(Symbolics.JuliaTarget(), fux, x, u, λ; skipzeros=true)[2])
-        fuu_func = eval(
+        fuu_func = @RuntimeGeneratedFunction(
             Symbolics._build_function(Symbolics.JuliaTarget(), fuu, x, u, λ; skipzeros=true)[2])
     else
         fxx_func = nothing
