@@ -90,7 +90,14 @@ solve!(solver, x1, ū)
 # ## Recover solution trajectories post-solve
 
 x_sol, u_sol = get_trajectory(solver)
+
+# ## Recover affine feedback policy of form u = fb(x) = ū + α + β(x - x̄) for MPC at the first timestep
+
+fb = get_feedback(solver, 1)
+x = rand(nx)
+u = fb(x)
 ```
+
 
 ---
 

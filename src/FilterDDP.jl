@@ -31,6 +31,6 @@ export OCP
 export Solver,
     Options,
     solve!,
-    get_trajectory
-
+    get_trajectory,
+    get_feedback
 end # module

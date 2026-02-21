@@ -62,3 +62,12 @@ function initialize_trajectory!(solver::Solver{T}, u::Vector{Vector{T}}, x1::Vec
     end
 end
 
+function get_feedback(solver::Solver{T}, t::Int) where T
+    nu = solver.ocp.nu[t]
+    α = solver.ws[t].eq_update_params[1:nu, 1]
+    β = solver.ws[t].eq_update_params[1:nu, 2:end]
+    ū = solver.ws[t].nominal.u
+    x̄ = solver.ws[t].nominal.x
+    f = x -> ū + α + β * (x - x̄)
+    return f
+end
