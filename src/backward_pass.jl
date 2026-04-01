@@ -61,14 +61,6 @@ function backward_pass!(ocp::OCP{T, nx, nu, nc}, ws::FilterDDPWorkspace{T, nx, n
             # inertia correction / regularisation
             Ĥ = Ĥ + diagm(reg * SVector{nu, T}(ones(T, nu)))
 
-            # if data.k == 0 && t == ocp.N - 56
-            #     println("t ", t, " ", ws[t].Qû)
-            #     println("t ", t, " ", ws[t].nominal.c)
-            #     println("t ", t, " ", B)
-            #     println("t ", t, " ", Ĥ)
-            #     println("t ", t, " ", ws[t+1].V̂xx)
-            # end
-
             data.status = factorize_ns!(Ĥ, ocp.constraints[t].cu_mem', ws[t].Qû, ws[t].nominal.c, B,
                     ocp.constraints[t].cx_mem, ws[t], options)
             
@@ -81,12 +73,6 @@ function backward_pass!(ocp::OCP{T, nx, nu, nc}, ws::FilterDDPWorkspace{T, nx, n
                 break
             end
 
-            # if data.k == 0 && t == ocp.N - 56
-            #     println("t ", t, " ", ws[t].α)
-            #     println("t ", t, " ", ws[t].β)
-            #     throw("oh fuck")
-            # end
-            
             # update parameters of update rule for ineq. dual variables, i.e., 
 
             # χ_L =  μ inv.(u - u^L) - z^L - Σ^L * α 
@@ -141,6 +127,7 @@ function factorize_ns!(H::SMatrix{nu, nu, T}, A::SMatrix{nu, nc, T}, Qu::SVector
         fk = lu(AY)
         α_β_y = fk \ [-c -cx]
 
+        H = Symmetric(H)
         M = Symmetric(Z' * H * Z)
         ck = cholesky(M; check=false)
         ck.info != 0 && return 1
@@ -164,3 +151,66 @@ function factorize_ns!(H::SMatrix{nu, nu, T}, A::SMatrix{nu, nc, T}, Qu::SVector
 
     return 0
 end
+
+# function factorize_ns!(H::SMatrix{nu, nu, T}, A::SMatrix{nu, nc, T}, Qu::SVector{nu, T}, c::SVector{nc, T},
+#             B::SMatrix{nu, nx, T}, cx::SMatrix{nc, nx, T}, wse::FilterDDPWorkspaceElement{T, nx, nu, nc},
+#             options::Options{T}) where {T, nx, nu, nc}
+#     if nc > 0
+#         # Q, R = qr([A SMatrix{nu, nu-nc, T}(zeros(T, nu, nu-nc))])
+#         H = Symmetric(H)
+
+#         Q = zeros(T, nu, nu)
+#         wsQ = Workspace(LAPACK.geqrf!, Q)
+#         Q[:, 1:nc] .= A
+#         LAPACK.geqrf!(wsQ, Q)
+#         LAPACK.orgqr!(wsQ, Q)
+
+#         Y = Q[:, SVector{nc, Int64}(1:nc)]
+#         Z = Q[:, SVector{nu-nc, Int64}(nc+1:nu)]
+        
+#         # AY = LowerTriangular(A' * Y)
+#         AY = A' * Y
+#         ws_AY = Workspace(LAPACK.getrf!, AY)
+#         # fk = lu(AY)
+
+#         α_β_y = Matrix([-c -cx])
+#         LAPACK.getrf!(ws_AY, AY)
+#         LAPACK.getrs!(ws_AY, 'N', AY, α_β_y)
+
+#         # α_β_y = fk \ [-c -cx]
+
+#         # M = Symmetric(Z' * H * Z)
+#         # ck = cholesky(M; check=false)
+#         # ck.info != 0 && return 1
+
+#         ZHZ_tmp = Matrix(Z' * H * Z)
+#         ws_ZHZ = Workspace(LAPACK.pstrf!, ZHZ_tmp)
+#         ZHZ_tmp, piv, rank_, info = LAPACK.pstrf!(ws_ZHZ, 'U', ZHZ_tmp, 1e-12)
+#         ch_ = CholeskyPivoted(ZHZ_tmp, 'U', piv, rank_, 1e-12, info)
+#         if info > 0
+#             return 1
+#         end
+#         α_β_z = Matrix(Z' * ([-Qu -B] - H * Y * α_β_y))
+#         ldiv!(ch_, α_β_z) # allocates because permute! call allocates
+
+#         # α_β_z = ck \ (Z' * ([-Qu -B] - H * Y * α_β_y))
+#         α_β = Y * α_β_y + Z * α_β_z
+#         wse.α = α_β[:, 1]
+#         wse.β = α_β[:, SVector{nx, Int64}(2:nx+1)]
+
+#         ψ_ω = Matrix((Y' * ([-Qu -B] - H * α_β)))
+#         LAPACK.getrs!(ws_AY, 'T', AY, ψ_ω)
+
+#         wse.ψ = ψ_ω[:, 1]
+#         wse.ω = ψ_ω[:, SVector{nx, Int64}(2:nx+1)]
+#     else
+#         ck = cholesky(Symmetric(H); check=false)
+#         ck.info != 0 && return 1
+
+#         α_β = ck \ [-Qu -B]
+#         wse.α = α_β[:, 1]
+#         wse.β = α_β[:, SVector{nx, Int64}(2:nx+1)]
+#     end
+
+#     return 0
+# end
