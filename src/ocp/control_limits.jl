@@ -1,26 +1,28 @@
-struct ControlLimits{T}
-    l::Vector{T}
-    u::Vector{T}
-    indl::Vector{Int}
-    indu::Vector{Int}
+struct ControlLimits{T, nu}
+    l::SVector{nu, T}
+    u::SVector{nu, T}
+    maskl::SVector{nu, Bool}
+    masku::SVector{nu, Bool}
     nl::Int
     nu::Int
 end
 
-function ControlLimits(l::Vector{T}, u::Vector{T}) where T
+function ControlLimits(l::SVector{nu, T}, u::SVector{nu, T}) where {T, nu}
     @assert length(l) == length(u)
     @assert all(u .>= l)
-    indl = [i for (i, mask) in enumerate(.!isinf.(l)) if mask]
-    indu = [i for (i, mask) in enumerate(.!isinf.(u)) if mask]
-    nl = sum([1 for b in l if !isinf(b)])
-    nu = sum([1 for b in u if !isinf(b)])
-    return ControlLimits{T}(l, u, indl, indu, nl, nu)
+    maskl = (l .!= -floatmax(T)) .&& .!isinf.(l)
+    masku = (u .!= floatmax(T)) .&& .!isinf.(u)
+    nlo = sum(maskl)
+    nup = sum(masku)
+    return ControlLimits{T, nu}(l, u, maskl, masku, nlo, nup)
 end
 
 function ControlLimits(T, nu::Int)
-    return ControlLimits(-T(Inf) .* ones(T, nu), T(Inf) .* ones(T, nu))
+    return ControlLimits(nu, -T(Inf), T(Inf))
 end
 
 function ControlLimits(nu::Int, l::T, u::T) where T
-    return ControlLimits(l .* ones(T, nu), u .* ones(T, nu))
+    l = isinf(l) ? -floatmax(T) : l
+    u = isinf(u) ? floatmax(T) : u
+    return ControlLimits(SVector{nu, T}(l .* ones(T, nu)), SVector{nu, T}(u .* ones(T, nu)))
 end

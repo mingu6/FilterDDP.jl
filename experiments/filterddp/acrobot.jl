@@ -6,6 +6,7 @@ using MeshCat
 using Printf
 using LaTeXStrings
 using BenchmarkTools
+using StaticArrays
 
 visualise = false
 benchmark = false
@@ -15,9 +16,9 @@ integrator = "Euler"
 control_limits = false
 
 T = Float64
-Δ = 0.02
-N = 201
-n_ocp = 100
+Δ = 0.05
+N = 101
+n_ocp = 1
 
 include("../models/acrobot.jl")
 
@@ -69,13 +70,13 @@ for seed = 1:n_ocp
 
     Q = diagm(T[1., 1., 0.1, 0.1])
 	l = (x, u) -> Δ * (2. * u' * u + (x - xN)' * Q * (x - xN))
-    lN = (x, u) -> 1000.0 * (x - xN)' * Q * (x - xN)
+    lN = (x, u) -> 1000.0 * (x - xN)' * Q * (x - xN) + 2. * u' * u
 
 	stage_obj = Objective(T, l, nx, nu)
 	term_obj = Objective(T, lN, nx, nu)
 
 	# ## Control Limits
-    cl = control_limits ? ControlLimits(T[-8.0], T[8.0]) : nothing
+    cl = control_limits ? ControlLimits(SVector{nu, T}(T[-8.0]), SVector{nu, T}(T[8.0])) : nothing
 
 	ocp = OCP(N, stage_obj, term_obj, dyn; control_limits=cl)
 	solver = Solver(ocp; options=options)
@@ -83,27 +84,27 @@ for seed = 1:n_ocp
 
 	# ## Initialise solver and solve
 	
-	x1 = zeros(T, nx)
-	ū = [zeros(T, nu) for _ = 1:N]
+	x1 = @SVector zeros(T, nx)
+	ū = [SVector{nu, T}(zeros(T, nu)) for _ = 1:N]
 	solve!(solver, x1, ū)
 
-	if benchmark
-		solver.options.verbose = false
-		solver_time = 0.0
-		wall_time = 0.0
-		for i in 1:n_benchmark
-			solve!(solver, x1, ū)
-			solver_time += solver.data.solver_time
-			wall_time += solver.data.wall_time
-		end
-		solver_time /= n_benchmark
-		wall_time /= n_benchmark
-		push!(results, [seed, solver.data.k, solver.data.status, solver.data.objective, solver.data.primal_inf, wall_time, solver_time])
-	else
-		push!(results, [seed, solver.data.k, solver.data.status, solver.data.objective, solver.data.primal_inf])
-	end
+	# if benchmark
+	# 	solver.options.verbose = false
+	# 	solver_time = 0.0
+	# 	wall_time = 0.0
+	# 	for i in 1:n_benchmark
+	# 		solve!(solver, x1, ū)
+	# 		solver_time += solver.data.solver_time
+	# 		wall_time += solver.data.wall_time
+	# 	end
+	# 	solver_time /= n_benchmark
+	# 	wall_time /= n_benchmark
+	# 	push!(results, [seed, solver.data.k, solver.data.status, solver.data.objective, solver.data.primal_inf, wall_time, solver_time])
+	# else
+	# 	push!(results, [seed, solver.data.k, solver.data.status, solver.data.objective, solver.data.primal_inf])
+	# end
 
-	push!(params, T[acrobot.m1, acrobot.I1, acrobot.l1, acrobot.lc1, acrobot.m2, acrobot.I2, acrobot.l2, acrobot.lc2])
+	# push!(params, T[acrobot.m1, acrobot.I1, acrobot.l1, acrobot.lc1, acrobot.m2, acrobot.I2, acrobot.l2, acrobot.lc2])
 
 	# ## Visualise trajectory using MeshCat
 
@@ -114,21 +115,21 @@ for seed = 1:n_ocp
 	end
 end
 
-open("results/acrobot.txt", "w") do io
-	@printf(io, " seed  iterations  status     objective           primal        wall (ms)   solver(ms)  \n")
-    for i = 1:n_ocp
-        if benchmark
-            @printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f        %5.1f  \n", Int64(results[i][1]), Int64(results[i][2]), Int64(results[i][3]) == 0,
-                            results[i][4], results[i][5], results[i][6] * 1000, results[i][7] * 1000)
-        else
-            @printf(io, " %2s     %5s      %5s    %.8e    %.8e \n",  Int64(results[i][1]), Int64(results[i][2]), Int64(results[i][3]) == 0, results[i][4], results[i][5])
-        end
-    end
-end
+# open("results/acrobot.txt", "w") do io
+# 	@printf(io, " seed  iterations  status     objective           primal        wall (ms)   solver(ms)  \n")
+#     for i = 1:n_ocp
+#         if benchmark
+#             @printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f        %5.1f  \n", Int64(results[i][1]), Int64(results[i][2]), Int64(results[i][3]) == 0,
+#                             results[i][4], results[i][5], results[i][6] * 1000, results[i][7] * 1000)
+#         else
+#             @printf(io, " %2s     %5s      %5s    %.8e    %.8e \n",  Int64(results[i][1]), Int64(results[i][2]), Int64(results[i][3]) == 0, results[i][4], results[i][5])
+#         end
+#     end
+# end
 
-# save parameters of each experiment for ProxDDP comparison
-open("params/acrobot.txt", "w") do io
-    for i = 1:n_ocp
-        println(io, join(string.(params[i]), " "))
-    end
-end
+# # save parameters of each experiment for ProxDDP comparison
+# open("params/acrobot.txt", "w") do io
+#     for i = 1:n_ocp
+#         println(io, join(string.(params[i]), " "))
+#     end
+# end

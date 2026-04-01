@@ -3,6 +3,7 @@ using LinearAlgebra
 using Plots
 using Random
 using Printf
+using StaticArrays
 
 benchmark = false
 verbose = true
@@ -98,8 +99,8 @@ for seed = 1:n_ocp
 
     # [control limits; obs slack; bound slack]
     cl = ControlLimits(
-        [ul; zeros(T, no); zeros(T, no)],
-        [uu; T(Inf) * ones(T, no); T(Inf) * ones(T, no)]
+        SVector{nu, T}([ul; zeros(T, no); zeros(T, no)]),
+        SVector{nu, T}([uu; T(Inf) * ones(T, no); T(Inf) * ones(T, no)])
     )
 
     # ## Initialise solver and solve
@@ -118,8 +119,8 @@ for seed = 1:n_ocp
         scatter!([xN[1]], [xN[2]], markershape=:star, color=:gold, markersize=10)
     end
     
-    x1 = T[0.0; 0.0; π / 8; 0.0] + rand(T, nx) .* T[0.0; 0.0; π / 4; 0.0]
-    ū = [[zeros(T, 2); T(1e-2) * ones(T, 2 * no)] for k = 1:N]
+    x1 = SVector{nx, T}(T[0.0; 0.0; π / 8; 0.0] + rand(T, nx) .* T[0.0; 0.0; π / 4; 0.0])
+    ū = [SVector{nu, T}([zeros(T, 2); T(1e-2) * ones(T, 2 * no)]) for k = 1:N]
 
     solve!(solver, x1, ū)
     

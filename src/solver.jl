@@ -1,71 +1,61 @@
-mutable struct Solver{T}
-    ocp::OCP{T}
-    ws::FilterDDPWorkspace{T}
+mutable struct Solver{T, nx, nu, nc}
+    ocp::OCP{T, nx, nu, nc}
+    ws::FilterDDPWorkspace{T, nx, nu, nc}
 	data::SolverData{T}
     options::Options{T}
 end
 
-function Solver(ocp::OCP{T}; options::Union{Options{T}, Nothing}=nothing) where T
+function Solver(ocp::OCP{T, nx, nu, nc}; options::Union{Options{T}, Nothing}=nothing) where {T, nx, nu, nc}
     ws = FilterDDPWorkspace(ocp)
     data = solver_data(T)
     options = isnothing(options) ? Options{T}() : options
 	return Solver(ocp, ws, data, options)
 end
 
-function get_trajectory(solver::Solver{T}) where T
+function get_trajectory(solver::Solver{T, nx, nu, nc}) where {T, nx, nu, nc}
     x = [wse.nominal.x for wse in solver.ws]
     u = [wse.nominal.u for wse in solver.ws]
 	return x, u
 end
 
-function initialize_trajectory!(solver::Solver{T}, u::Vector{Vector{T}}, x1::Vector{T}) where T
+function initialize_trajectory!(solver::Solver{T, nx, nu, nc}, u::Vector{SVector{nu, T}}, x1::SVector{nx, T}) where {T, nx, nu, nc}
     options = solver.options
+    κ_1 = options.κ_1
+    κ_2 = options.κ_2
 
-    solver.ws[1].nominal.x .= x1
+    solver.ws[1].nominal.x = x1
     for t = 1:solver.ocp.N
         cl = solver.ocp.control_limits[t]
-        u_tmp1 = solver.ws[t].u_tmp1
-        u_tmp2 = solver.ws[t].u_tmp2
-        ūt = solver.ws[t].nominal.u
-        ūl, ūu = solver.ws[t].nominal.ul, solver.ws[t].nominal.uu
-        nu = solver.ocp.constraints[t].nu
-        for i in 1:nu
-            if !isinf(cl.l[i]) && isinf(cl.u[i])
-                u_tmp1[i] = max(cl.l[i], 1.0)
-                u_tmp1[i] *= options.κ_1
-                u_tmp1[i] += cl.l[i]
-                ūt[i] = max(u[t][i], u_tmp1[i])
-            elseif !isinf(cl.u[i]) && isinf(cl.l[i])
-                u_tmp1[i] = max(cl.u[i], 1.0)
-                u_tmp1[i] *= -options.κ_1
-                u_tmp1[i] += cl.u[i]
-                replace!(u_tmp1[i], NaN=>Inf)
-                ūt[i] = min(u[t][i], u_tmp1)
-            elseif !isinf(cl.u[i]) && !isinf(cl.l[i])
-                u_tmp1[i] = cl.l[i] + min(options.κ_1 * max(1.0, abs(cl.l[i])),
-                                    options.κ_2 * (cl.u[i] - cl.l[i]))
-                u_tmp2[i] = cl.u[i] - min(options.κ_1 * max(1.0, abs(cl.u[i])),
-                                    options.κ_2 * (cl.u[i] - cl.l[i]))
-                ūt[i] = min(max(u[t][i], u_tmp1[i]), u_tmp2[i])
-            else
-                ūt[i] = u[t][i]
-            end
-        end
+
+        ūt = @SVector zeros(T, nu)
+        mask_lo = cl.maskl .* .!cl.masku
+        ūt = ūt + max.(u[t],  options.κ_1 .* max.(cl.l, 1.0) + cl.l) .* mask_lo
+
+        mask_up = cl.masku .* .!cl.maskl
+        ūt = ūt + min.(u[t], -options.κ_1 .* max.(cl.u, 1.0) + cl.u) .* mask_up
+
+        mask_both = cl.masku .* cl.maskl
+        u1 = cl.l + min.(κ_1 * max.(1.0, abs.(cl.l)), κ_2 .* (cl.u - cl.l))
+        u2 = cl.u - min.(κ_1 * max.(1.0, abs.(cl.u)), κ_2 .* (cl.u - cl.l))
+        ūt = ūt + min.(max.(u[t], u1), u2) .* mask_both
+
+        mask_none = .!cl.masku .* .!cl.maskl
+        ūt = ūt + u[t] .* mask_none
+
+        solver.ws[t].nominal.u = ūt
 
         # initialise inequality constraints
-        ūl .= ūt
-        ūl .-= cl.l
-        ūu .= cl.u
-        ūu .-= ūt
 
+        solver.ws[t].nominal.ul = ūt - cl.l
+        solver.ws[t].nominal.uu = cl.u - ūt
+        
         t < solver.ocp.N && dynamics!(solver.ocp.dynamics[t], solver.ws[t], solver.ws[t+1]; mode=:nominal)
     end
 end
 
-function get_feedback(solver::Solver{T}, t::Int) where T
-    nu = solver.ocp.nu[t]
-    α = solver.ws[t].eq_update_params[1:nu, 1]
-    β = solver.ws[t].eq_update_params[1:nu, 2:end]
+function get_feedback(solver::Solver{T, nx, nu, nc}, t::Int) where {T, nx, nu, nc}
+    α = solver.ws[t].α
+    β = solver.ws[t].β
     ū = solver.ws[t].nominal.u
     x̄ = solver.ws[t].nominal.x
     f = x -> ū + α + β * (x - x̄)

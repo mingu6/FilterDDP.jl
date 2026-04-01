@@ -5,6 +5,7 @@ using Plots
 using MeshCat
 using Printf
 using LaTeXStrings
+using StaticArrays
 
 visualise = false
 benchmark = false
@@ -14,7 +15,7 @@ n_benchmark = 10
 T = Float64
 Δ = 0.05
 N = 101
-n_ocp = 100
+n_ocp = 1
 
 include("../models/acrobot.jl")
 
@@ -24,7 +25,7 @@ if visualise
 	render(vis)
 end
 
-qN = T[π; 0.0]
+qN = SA[π; 0.0]
 
 options = Options{T}(verbose=verbose, optimality_tolerance=1e-7)
 
@@ -88,8 +89,8 @@ for seed = 1:n_ocp
 	# ## Control Limits
 
 	cl = ControlLimits(
-		[-T(8.0); -T(Inf) * ones(T, nq);         zeros(T, 3 * nc)],
-		[ T(8.0); T(Inf) * ones(T, nq); T(Inf) * ones(T, 3 * nc)]
+		SVector{nu, T}([-T(8.0); -T(Inf) * ones(T, nq);          zeros(T, 3 * nc)]),
+		SVector{nu, T}([ T(8.0);  T(Inf) * ones(T, nq); T(Inf) * ones(T, 3 * nc)])
 	)
 
 	ocp = OCP(N, stage_obj, term_obj, dyn; constraints=constraints, control_limits=cl)
@@ -98,8 +99,8 @@ for seed = 1:n_ocp
 
 	# ## Initialise solver and solve
 	
-	x1 = zeros(T, 4)
-	ū = [[zeros(T, nτ); zeros(T, 2); T(0.01) * ones(T, nc); T(0.01) * ones(T, 2 * nc)] for _ = 1:N]
+	x1 = SVector{4, T}(zeros(T, 4))
+	ū = [SVector{nu, T}([zeros(T, nτ + 2); T(0.01) * ones(T, 6)]) for _ = 1:N]
 	solve!(solver, x1, ū)
 
 	if benchmark

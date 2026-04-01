@@ -1,5 +1,5 @@
-function forward_pass!(ocp::OCP{T}, ws::FilterDDPWorkspace{T}, data::SolverData{T},
-            options::Options{T}; verbose=false) where T
+function forward_pass!(ocp::OCP{T, nx, nu, nc}, ws::FilterDDPWorkspace{T, nx, nu, nc}, data::SolverData{T},
+            options::Options{T}; verbose=false) where {T, nx, nu, nc}
     data.l = 0  # line search iteration counter
     data.status = 0
     data.step_size = T(1.0)
@@ -23,7 +23,7 @@ function forward_pass!(ocp::OCP{T}, ws::FilterDDPWorkspace{T}, data::SolverData{
             rethrow(e)
         end
         
-        data.status = check_fraction_boundary(ws, τ, data.k)
+        data.status = check_fraction_boundary(ocp, ws, τ, data.k)
         data.status != 0 && (data.step_size *= 0.5, continue)
 
         constraints!(ocp.constraints, ws; mode=:current)
@@ -56,20 +56,28 @@ function forward_pass!(ocp::OCP{T}, ws::FilterDDPWorkspace{T}, data::SolverData{
     data.status != 0 && (verbose && (@warn "Line search failed to find a suitable iterate"))
 end
 
-function check_fraction_boundary(ws::FilterDDPWorkspace{T}, τ::T, k) where T
-    for wse in ws
+function check_fraction_boundary(ocp::OCP{T, nx, nu, nc}, ws::FilterDDPWorkspace{T, nx, nu, nc}, τ::T, k) where {T, nx, nu, nc}
+    for (t, wse) in enumerate(ws)
         zl, zl̄ = wse.current.zl, wse.nominal.zl
         zu, zū = wse.current.zu, wse.nominal.zu
         ul, ul̄ = wse.current.ul, wse.nominal.ul
         uu, uū = wse.current.uu, wse.nominal.uu
 
-        if any(c * (1. - τ) > d for (c, d) in zip(ul̄, ul))
+        if any((ul̄ .* (1. - τ) .> ul) .* ocp.control_limits[t].maskl)
             return 2
         end
 
-        if any(c * (1. - τ) > d for (c, d) in zip(uū, uu))
+        if any((uū .* (1. - τ) .> uu) .* ocp.control_limits[t].masku)
             return 2
         end
+
+        # if any(c * (1. - τ) > d for (c, d) in zip(ul̄, ul))
+        #     return 2
+        # end
+
+        # if any(c * (1. - τ) > d for (c, d) in zip(uū, uu))
+        #     return 2
+        # end
 
         if any(c * (1. - τ) > d for (c, d) in zip(zl̄, zl))
             return 2
@@ -82,71 +90,38 @@ function check_fraction_boundary(ws::FilterDDPWorkspace{T}, τ::T, k) where T
     return 0
 end
 
-function expected_change_lagrangian(ws::FilterDDPWorkspace{T}) where T
+function expected_change_lagrangian(ws::FilterDDPWorkspace{T, nx, nu, nc}) where {T, nx, nu, nc}
     ΔL = T(0.0)
     for wse in ws
-        nu = length(wse.Qû)
-        α = @views wse.eq_update_params[1:nu, 1]
-        ψ = @views wse.eq_update_params[nu+1:end, 1]
-        ΔL += dot(wse.Qû, α)
-        ΔL += dot(wse.nominal.c, ψ)
+        ΔL += dot(wse.Qû, wse.α)
+        ΔL += dot(wse.nominal.c, wse.ψ)
     end
     return ΔL
 end
 
-function rollout!(ocp::OCP{T}, ws::FilterDDPWorkspace{T}, data::SolverData{T}; step_size::T=1.0) where T
-    ws[1].current.x .= ws[1].nominal.x
+function rollout!(ocp::OCP{T, nx, nu, nc}, ws::FilterDDPWorkspace{T, nx, nu, nc}, data::SolverData{T}; step_size::T=1.0) where {T, nx, nu, nc}
+    ws[1].current.x = ws[1].nominal.x
 
     for t in 1:ocp.N
-        nu = ocp.constraints[t].nu
-        χl = @views ws[t].ineq_update_params[1:nu, 1]
-        χu = @views ws[t].ineq_update_params[nu+1:end, 1]
-        α = @views ws[t].eq_update_params[1:nu, 1]
-        ψ = @views ws[t].eq_update_params[nu+1:end, 1]
-        β = @views ws[t].eq_update_params[1:nu, 2:end]
-        ω = @views ws[t].eq_update_params[nu+1:end, 2:end]
-        ζl = @views ws[t].ineq_update_params[1:nu, 2:end]
-        ζu = @views ws[t].ineq_update_params[nu+1:end, 2:end]
-        u, ū = ws[t].current.u, ws[t].nominal.u
-        ϕ, ϕ̄ = ws[t].current.ϕ, ws[t].nominal.ϕ
-        zl, zl̄ = ws[t].current.zl, ws[t].nominal.zl
-        zu, zū = ws[t].current.zu, ws[t].nominal.zu
-        ul, uu = ws[t].current.ul, ws[t].current.uu
-
-        δx = ws[t].x_tmp
-        δx .= ws[t].current.x
-        δx .-= ws[t].nominal.x
+        δx = ws[t].current.x - ws[t].nominal.x
 
         # u[t] .= ū[t] + β[t] * (x[t] - x̄[t]) + step_size * α[t]
-        u .= α
-        u .*= step_size
-        u .+= ū
-        mul!(u, β, δx, 1.0, 1.0)
+        ws[t].current.u = ws[t].nominal.u + step_size .* ws[t].α + ws[t].β * δx
 
         # ϕ[t] .= ϕ̄[t] + ω[t] * (x[t] - x̄[t]) + step_size * ψ[t]
-        ϕ .= ψ
-        ϕ .*= step_size
-        ϕ .+= ϕ̄
-        mul!(ϕ, ω, δx, 1.0, 1.0)
+        ws[t].current.ϕ = ws[t].nominal.ϕ + step_size .* ws[t].ψ + ws[t].ω * δx
 
-        zl .= χl
-        zl .*= step_size
-        zl .+= zl̄
-        mul!(zl, ζl, δx, 1.0, 1.0)
-
-        zu .= χu
-        zu .*= step_size
-        zu .+= zū
-        mul!(zu, ζu, δx, 1.0, 1.0)
+        ws[t].current.zl = ws[t].nominal.zl + step_size .* ws[t].χl + ws[t].ζl * δx
+        ws[t].current.zu = ws[t].nominal.zu + step_size .* ws[t].χu + ws[t].ζu * δx
         
         fn_eval_time_ = time()
-        t < ocp.N && dynamics!(ocp.dynamics[t], ws[t], ws[t+1], mode=:current)
+        if t < ocp.N
+            dynamics!(ocp.dynamics[t], ws[t], ws[t+1], mode=:current)
+        end
         
         # evaluate inequality constraints
-        ul .= u
-        ul .-= ocp.control_limits[t].l
-        uu .= ocp.control_limits[t].u
-        uu .-= u
+        ws[t].current.ul = ws[t].current.u - ocp.control_limits[t].l
+        ws[t].current.uu = ocp.control_limits[t].u - ws[t].current.u
         data.fn_eval_time += time() - fn_eval_time_
     end
 end
