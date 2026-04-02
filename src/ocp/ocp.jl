@@ -1,4 +1,4 @@
-mutable struct OCP{T, nx, nu, nc}
+struct OCP{T, nx, nu, nc}
     N::Int
     stage_objective::Objective{T, nx, nu}
     term_objective::Objective{T, nx, nu}
