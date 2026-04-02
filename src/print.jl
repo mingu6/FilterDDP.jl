@@ -16,15 +16,15 @@ function iteration_status(
 
     # header
     if rem(data.k, options.print_frequency) == 0
-        @printf "  iter     objective        pr_inf       du_inf       cs_inf     lg(μ)   lg(reg)    alpha     ls   wall_time  solver_time\n"
+        @printf "  iter     objective        pr_inf       du_inf       cs_inf     lg(μ)   lg(reg)    alpha     ls\n"
     end
     
 
     # iteration information
-    @printf(" %5s   %.8e   %.4e   %.4e   %.4e   % 1.2f  %5s   %.4e  %2s    %5.2f    %5.2f\n",
-        data.k, data.objective, data.primal_inf, data.dual_inf, data.cs_inf,
+    @printf(" %5s   %.8e   %.4e   %.4e   %.4e   % 1.2f  %5s   %.4e  %2s\n",
+        data.k, data.objective, data.primal_inf, data.dual_inf, data.cs_inf_0,
         log10(data.μ), data.reg_last == 0.0 ? "    -  " : @sprintf("% 2.4f", log10(data.reg_last)),
-        data.step_size, data.l, data.wall_time * 1000, data.solver_time * 1000)
+        data.step_size, data.l)
 end
 
 function on_exit(data::SolverData)

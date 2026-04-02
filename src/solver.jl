@@ -1,20 +1,66 @@
-mutable struct Solver{T, nx, nu, nc}
+struct TrajectoryElement{T, nx, nu, nc}
+    x::SVector{nx, T}
+    u::SVector{nu, T}
+    ϕ::SVector{nc, T}
+    zl::SVector{nu, T}
+    zu::SVector{nu, T}
+end
+
+function TrajectoryElement(T, nx::Int, nu::Int, nc::Int)
+    TrajectoryElement{T, nx, nu, nc}(
+        SVector{nx, T}(zeros(T, nx)),
+        SVector{nu, T}(zeros(T, nu)),
+        SVector{nc, T}(zeros(T, nc)),
+        SVector{nu, T}(zeros(T, nu)),
+        SVector{nu, T}(zeros(T, nu))
+        )
+end
+
+struct UpdateRule{T, nx, nu, nc}
+    α::SVector{nu, T}
+    ψ::SVector{nc, T}
+    β::SMatrix{nu, nx, T}
+    ω::SMatrix{nc, nx, T}
+    χl::SVector{nu, T}
+    χu::SVector{nu, T}
+    ζl::SMatrix{nu, nx, T}
+    ζu::SMatrix{nu, nx, T}
+end
+
+struct Solver{T, nx, nu, nc}
     ocp::OCP{T, nx, nu, nc}
-    ws::FilterDDPWorkspace{T, nx, nu, nc}
+    nominal::Vector{TrajectoryElement{T, nx, nu, nc}}
+    current::Vector{TrajectoryElement{T, nx, nu, nc}}
+    update::Vector{UpdateRule{T, nx, nu, nc}}
 	data::SolverData{T}
     options::Options{T}
 end
 
+function UpdateRule(T, nx::Int, nu::Int, nc::Int)
+    UpdateRule{T, nx, nu, nc}(
+        SVector{nu, T}(zeros(T, nu)),
+        SVector{nc, T}(zeros(T, nc)),
+        SMatrix{nu, nx, T}(zeros(T, nu, nx)),
+        SMatrix{nc, nx, T}(zeros(T, nc, nx)),
+        SVector{nu, T}(zeros(T, nu)),
+        SVector{nu, T}(zeros(T, nu)),
+        SMatrix{nu, nx, T}(zeros(T, nu, nx)),
+        SMatrix{nu, nx, T}(zeros(T, nu, nx))
+    )
+end
+
 function Solver(ocp::OCP{T, nx, nu, nc}; options::Union{Options{T}, Nothing}=nothing) where {T, nx, nu, nc}
-    ws = FilterDDPWorkspace(ocp)
+    nominal = [TrajectoryElement(T, nx, nu, nc) for _ = 1:ocp.N]
+    current = [TrajectoryElement(T, nx, nu, nc) for _ = 1:ocp.N]
+    update = [UpdateRule(T, nx, nu, nc) for _ = 1:ocp.N]
     data = solver_data(T)
     options = isnothing(options) ? Options{T}() : options
-	return Solver(ocp, ws, data, options)
+	return Solver(ocp, nominal, current, update, data, options)
 end
 
 function get_trajectory(solver::Solver{T, nx, nu, nc}) where {T, nx, nu, nc}
-    x = [wse.nominal.x for wse in solver.ws]
-    u = [wse.nominal.u for wse in solver.ws]
+    x = [nom.x for nom in solver.nominal]
+    u = [nom.u for nom in solver.nominal]
 	return x, u
 end
 
@@ -23,10 +69,9 @@ function initialize_trajectory!(solver::Solver{T, nx, nu, nc}, u::Vector{SVector
     κ_1 = options.κ_1
     κ_2 = options.κ_2
 
-    solver.ws[1].nominal.x = x1
+    cl = solver.ocp.control_limits
+    x = x1
     for t = 1:solver.ocp.N
-        cl = solver.ocp.control_limits[t]
-
         ūt = @SVector zeros(T, nu)
         mask_lo = cl.maskl .* .!cl.masku
         ūt = ūt + max.(u[t],  options.κ_1 .* max.(cl.l, 1.0) + cl.l) .* mask_lo
@@ -42,22 +87,30 @@ function initialize_trajectory!(solver::Solver{T, nx, nu, nc}, u::Vector{SVector
         mask_none = .!cl.masku .* .!cl.maskl
         ūt = ūt + u[t] .* mask_none
 
-        solver.ws[t].nominal.u = ūt
+        ϕ = @SVector zeros(T, nc)
+        zl = SVector{nu, T}(ones(T, nu) .* cl.maskl)
+        zu = SVector{nu, T}(ones(T, nu) .* cl.masku)
 
-        # initialise inequality constraints
-
-        solver.ws[t].nominal.ul = ūt - cl.l
-        solver.ws[t].nominal.uu = cl.u - ūt
+        solver.nominal[t] = TrajectoryElement{T, nx, nu, nc}(x, ūt, ϕ, zl, zu)
         
-        t < solver.ocp.N && dynamics!(solver.ocp.dynamics[t], solver.ws[t], solver.ws[t+1]; mode=:nominal)
+        if t < solver.ocp.N
+            x = solver.ocp.dynamics.f(x, ūt)
+        end
     end
 end
 
+function update_nominal_trajectory!(solver::Solver{T, nx, nu, nc}) where {T, nx, nu, nc}
+    for t = 1:solver.ocp.N
+        solver.nominal[t] = solver.current[t]
+    end
+    return nothing
+end
+
 function get_feedback(solver::Solver{T, nx, nu, nc}, t::Int) where {T, nx, nu, nc}
-    α = solver.ws[t].α
-    β = solver.ws[t].β
-    ū = solver.ws[t].nominal.u
-    x̄ = solver.ws[t].nominal.x
+    α = solver.update[t].α
+    β = solver.update[t].β
+    ū = solver.nominal[t].u
+    x̄ = solver.nominal[t].x
     f = x -> ū + α + β * (x - x̄)
     return f
 end

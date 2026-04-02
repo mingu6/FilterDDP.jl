@@ -1,68 +1,148 @@
-function backward_pass!(ocp::OCP{T, nx, nu, nc}, ws::FilterDDPWorkspace{T, nx, nu, nc}, data::SolverData{T},
-            options::Options{T}; verbose::Bool=false) where {T, nx, nu, nc}
+function backward_pass!(solver::Solver{T, nx, nu, nc}, ocp::OCP{T, nx, nu, nc}, traj::Vector{TrajectoryElement{T, nx, nu, nc}},
+            data::SolverData{T}, options::Options{T}; verbose::Bool=false) where {T, nx, nu, nc}
     reg::T = 0.0
     μ = data.μ
     δ_c = 0.
     reg = 0.0
+
+    constraints = ocp.constraints
+    dynamics = ocp.dynamics
+    cl = ocp.control_limits
+    ni = (cl.nl + cl.nu) * ocp.N
     
     while reg <= options.reg_max
         data.status = 0
+        V̂x = @SVector zeros(T, nx)
+        V̂xx = @SMatrix zeros(T, nx, nx)
+        λ = @SVector zeros(T, nx)
+
+        data.barrier_lagrangian_curr = T(0.0)
+        data.primal_1_curr = T(0.0)
+        data.primal_inf = T(0.0)
+        data.cs_inf_μ = T(0.0)
+        data.cs_inf_0 = T(0.0)
+        data.objective = T(0.0)
+        data.dual_inf = T(0.0)
+        data.expected_change_L = T(0.0)
+        ϕ_norm = T(0.0)
+        z_norm = T(0.0) 
         
         for t = ocp.N:-1:1
-            inv_ul = inv.(ws[t].nominal.ul) .* ocp.control_limits[t].maskl
-            inv_uu = inv.(ws[t].nominal.uu) .* ocp.control_limits[t].masku
+            x, u, ϕ, zl, zu = traj[t].x, traj[t].u, traj[t].ϕ, traj[t].zl, traj[t].zu
+
+            # evaluate derivatives
+
+            objective = t == ocp.N ? ocp.term_objective : ocp.stage_objective
+            lx = objective.lx(x, u)
+            lu_ = objective.lu(x, u)
+            lxx = objective.lxx(x, u)
+            lux = objective.lux(x, u)
+            luu = objective.luu(x, u)
+            
+            if nc > 0
+                c = constraints.c(x, u)
+                cx = constraints.cx(x, u)
+                cu = constraints.cu(x, u)
+                cxx = constraints.cxx(x, u, ϕ)
+                cux = constraints.cux(x, u, ϕ)
+                cuu = constraints.cuu(x, u, ϕ)
+
+                # evaluate constraint violation norms
+
+                data.primal_1_curr += norm(c, 1)
+                data.primal_inf = max(data.primal_inf, norm(c, Inf))
+            end
+
+            fx = dynamics.fx(x, u)
+            fu = dynamics.fu(x, u)
+            fxx = nc == 0 ? dynamics.fxx(x, u, V̂x) : dynamics.fxx(x, u, λ)
+            fux = nc == 0 ? dynamics.fux(x, u, V̂x) : dynamics.fux(x, u, λ)
+            fuu = nc == 0 ? dynamics.fuu(x, u, V̂x) : dynamics.fuu(x, u, λ)
+
+            # evaluate barrier Lagrangian
+
+            ul = u - cl.l
+            uu = cl.u - u
+            data.barrier_lagrangian_curr -= μ* (dot(log.(ul), cl.maskl) + dot(log.(uu), cl.masku))
+            data.objective += objective.l(x, u)[1]
+
+            # evaluate complementary slackness errors
+            cs_l = ul .* zl
+            cs_u = uu .* zu
+            data.cs_inf_0 = max(data.cs_inf_0, norm(cs_l .* cl.maskl, Inf))
+            data.cs_inf_μ = max(data.cs_inf_μ, norm((cs_l .- μ).* cl.maskl, Inf))
+            data.cs_inf_0 = max(data.cs_inf_0, norm(cs_u .* cl.masku, Inf))
+            data.cs_inf_μ = max(data.cs_inf_μ, norm((cs_u .- μ) .* cl.masku, Inf))
+
+            inv_ul = inv.(ul) .* cl.maskl
+            inv_uu = inv.(uu) .* cl.masku
 
             # Qû = Lu' -μŪ^{-1}e + fu' * V̂x
-            ws[t].Qû = ocp.objective[t].lu_mem + ocp.constraints[t].cu_mem' * ws[t].nominal.ϕ
-            if t < ocp.N
-                ws[t].Qû = ws[t].Qû + ocp.dynamics[t].fu_mem' * ws[t+1].V̂x
-            end
-            ws[t].Qû = ws[t].Qû + μ .* (inv_uu - inv_ul)   # barrier gradient
+            Qû = lu_ + fu' * V̂x + μ .* (inv_uu - inv_ul)
             
             # C = Lxx + fx' * Vxx * fx + V̄x ⋅ fxx
-            C = ocp.objective[t].lxx_mem
-            if t < ocp.N
-                C = C + ocp.dynamics[t].fx_mem' * ws[t+1].V̂xx * ocp.dynamics[t].fx_mem
-            end
+            C = lxx + fx' * V̂xx * fx + fxx
     
+            ux_tmp = fu' * V̂xx
             # Ĥ = Luu + Σ + fu' * Vxx * fu + V̄x ⋅ fuu
-            Σ_L = inv_ul .* ws[t].nominal.zl
-            Σ_U = inv_uu .* ws[t].nominal.zu
-            Ĥ = ocp.objective[t].luu_mem + diagm(Σ_L) + diagm(Σ_U)
+            Σ_L = inv_ul .* zl
+            Σ_U = inv_uu .* zu
+            Ĥ = luu + diagm(Σ_L) + diagm(Σ_U) + ux_tmp * fu + fuu
     
-            # B = Lux + fu' * Vxx * fx + V̄x ⋅ fxu
-            B = ocp.objective[t].lux_mem
-            if t < ocp.N
-                ux_tmp = ocp.dynamics[t].fu_mem' * ws[t+1].V̂xx
-                Ĥ = Ĥ + ux_tmp * ocp.dynamics[t].fu_mem
-                B = B + ux_tmp * ocp.dynamics[t].fx_mem
-            end
-            
-            # apply second order tensor contraction terms to Q̂uu, Q̂ux, Q̂xx
-            if !options.quasi_newton
-                if t < ocp.N
-                    fn_eval_time_ = time()
-                    if ocp.no_eq_constr
-                        hessians!(ocp.dynamics[t], ws[t], ws[t+1].V̂x)
-                    else
-                        hessians!(ocp.dynamics[t], ws[t], ws[t+1].nominal.λ)
-                    end
-                    data.fn_eval_time += time() - fn_eval_time_
-                    C = C + ocp.dynamics[t].fxx_mem
-                    B = B + ocp.dynamics[t].fux_mem
-                    Ĥ = Ĥ + ocp.dynamics[t].fuu_mem
-                end
+            # B = Lux + fu' * Vxx * fx + V̄x ⋅ fux
+            B = lux + ux_tmp * fx + fux
 
-                Ĥ = Ĥ + ocp.constraints[t].cuu_mem
-                B = B + ocp.constraints[t].cux_mem
-                C = C + ocp.constraints[t].cxx_mem
+            if nc > 0
+                data.barrier_lagrangian_curr += dot(c, ϕ)
+                Qû = Qû + cu' * ϕ
+                C = C + cxx
+                Ĥ = Ĥ + cuu
+                B = B + cux
             end
             
             # inertia correction / regularisation
             Ĥ = Ĥ + diagm(reg * SVector{nu, T}(ones(T, nu)))
 
-            data.status = factorize_ns!(Ĥ, ocp.constraints[t].cu_mem', ws[t].Qû, ws[t].nominal.c, B,
-                    ocp.constraints[t].cx_mem, ws[t], options)
+            # factorise KKT system using nullspace method
+            if nc > 0
+                A = cu'
+                Q, R = qr([A SMatrix{nu, nu-nc, T}(zeros(T, nu, nu-nc))])
+                Y = Q[:, SVector{nc, Int64}(1:nc)]
+                Z = Q[:, SVector{nu-nc, Int64}(nc+1:nu)]
+                
+                AY = LowerTriangular(A' * Y)
+                fk = lu(AY)
+                α_β_y = fk \ [-c -cx]
+
+                Ĥ = Symmetric(Ĥ)
+                M = Symmetric(Z' * Ĥ * Z)
+                ck = cholesky(M; check=false)
+                if ck.info != 0
+                    data.status = 1
+                else
+                    α_β_z = ck \ (Z' * ([-Qû -B] - Ĥ * Y * α_β_y))
+                    α_β = Y * α_β_y + Z * α_β_z
+                    α = α_β[:, 1]
+                    β = α_β[:, SVector{nx, Int64}(2:nx+1)]
+
+                    ψ_ω = ((Y' * ([-Qû -B] - Ĥ * α_β))' / fk)'
+                    ψ = ψ_ω[:, 1]
+                    ω = ψ_ω[:, SVector{nx, Int64}(2:nx+1)]
+                end
+
+            else
+                ck = cholesky(Symmetric(Ĥ); check=false)
+                ck.info != 0
+                if ck.info != 0
+                    data.status = 1
+                else
+                    α_β = ck \ [-Qû -B]
+                    α = α_β[:, 1]
+                    β = α_β[:, SVector{nx, Int64}(2:nx+1)]
+                    ψ = @SVector zeros(T, nc)
+                    ω = @SMatrix zeros(T, nc, nx)
+                end
+            end
             
             if data.status == 1
                 if iszero(reg) # initial setting of regularisation
@@ -82,135 +162,54 @@ function backward_pass!(ocp::OCP{T, nx, nu, nc}, ws::FilterDDPWorkspace{T, nx, n
 
             # see update above for Q̂u[t] for first part of χ^L[t] χ^U[t]
 
-            ws[t].ζl =  -ws[t].β .* Σ_L
-            ws[t].χl = inv_ul .* μ - ws[t].nominal.zl - Σ_L .* ws[t].α
+            ζl =  -β .* Σ_L
+            χl = inv_ul .* μ - zl - Σ_L .* α
 
-            ws[t].ζu =  Σ_U .* ws[t].β
-            ws[t].χu = inv_uu .* μ - ws[t].nominal.zu + Σ_U .* ws[t].α
+            ζu =  Σ_U .* β
+            χu = inv_uu .* μ - zu + Σ_U .* α
+
+            # update the update rule
+            solver.update[t] = UpdateRule{T, nx, nu, nc}(α, ψ, β, ω, χl, χu, ζl, ζu)
+
+            # evaluate optimality dual error
+            Lu = lu_ - zl + zu + fu' * λ
+            if nc > 0
+                Lu = Lu + cu' * ϕ
+            end
+            data.dual_inf = max(data.dual_inf, norm(Lu, Inf))
+            z_norm += sum(zl)
+            z_norm += sum(zu)
+            ϕ_norm += norm(ϕ, 1)
 
             # Update return V derivatives for next timestep Vxx = C + β' * B + ω' cx
-            ws[t].V̂xx = C + ws[t].β' * B 
+            V̂xx = C + β' * B 
             if nc > 0
-                ws[t].V̂xx = ws[t].V̂xx  + ws[t].ω' * ocp.constraints[t].cx_mem
+                V̂xx = V̂xx  + ω' * cx
             end
 
             # Vx = Lx' + β' * Qû + ω' c + fx' Vx+
-            ws[t].V̂x = ocp.objective[t].lx_mem + ocp.constraints[t].cx_mem' * ws[t].nominal.ϕ
-            ws[t].nominal.λ = ws[t].V̂x
-            ws[t].V̂x = ws[t].V̂x + ws[t].β' * ws[t].Qû + ws[t].ω' * ws[t].nominal.c
-            if t < ocp.N
-                ws[t].V̂x = ws[t].V̂x + ocp.dynamics[t].fx_mem' * ws[t+1].V̂x
-            end
+            V̂x = lx + β' * Qû + fx' * V̂x
 
             # λ = Lx' + fx' λ+
-            if t < ocp.N
-                ws[t].nominal.λ = ws[t].nominal.λ + ocp.dynamics[t].fx_mem' * ws[t+1].nominal.λ
-            end
-        end
+            λ = lx + fx' * λ
 
+            if nc > 0
+                V̂x = V̂x + cx' * ϕ + ω' * c
+                λ = λ + cx' * ϕ
+            end
+
+            # evaluate sufficient decrease condition in forward pass
+            data.expected_change_L += dot(Qû, α)
+            nc > 0 && (data.expected_change_L += dot(c, ψ))
+        end
+        scaling_dual = max(options.s_max, (ϕ_norm + z_norm) / max(ni + nc * ocp.N, 1.0))  / options.s_max
+        scaling_cs = max(options.s_max, z_norm / max(ni, 1.0))  / options.s_max
+        data.dual_inf /= scaling_dual
+        data.cs_inf_0 /= scaling_cs
+        data.cs_inf_μ /= scaling_cs
+        data.barrier_lagrangian_curr += data.objective
         data.status == 0 && break
     end
     data.reg_last = reg
     data.status != 0 && (verbose && (@warn "Backward pass failure, unable to find an iteration matrix with correct inertia."))
 end
-
-
-function factorize_ns!(H::SMatrix{nu, nu, T}, A::SMatrix{nu, nc, T}, Qu::SVector{nu, T}, c::SVector{nc, T},
-            B::SMatrix{nu, nx, T}, cx::SMatrix{nc, nx, T}, wse::FilterDDPWorkspaceElement{T, nx, nu, nc},
-            options::Options{T}) where {T, nx, nu, nc}
-    if nc > 0
-        Q, R = qr([A SMatrix{nu, nu-nc, T}(zeros(T, nu, nu-nc))])
-        Y = Q[:, SVector{nc, Int64}(1:nc)]
-        Z = Q[:, SVector{nu-nc, Int64}(nc+1:nu)]
-        
-        AY = LowerTriangular(A' * Y)
-        fk = lu(AY)
-        α_β_y = fk \ [-c -cx]
-
-        H = Symmetric(H)
-        M = Symmetric(Z' * H * Z)
-        ck = cholesky(M; check=false)
-        ck.info != 0 && return 1
-
-        α_β_z = ck \ (Z' * ([-Qu -B] - H * Y * α_β_y))
-        α_β = Y * α_β_y + Z * α_β_z
-        wse.α = α_β[:, 1]
-        wse.β = α_β[:, SVector{nx, Int64}(2:nx+1)]
-
-        ψ_ω = ((Y' * ([-Qu -B] - H * α_β))' / fk)'
-        wse.ψ = ψ_ω[:, 1]
-        wse.ω = ψ_ω[:, SVector{nx, Int64}(2:nx+1)]
-    else
-        ck = cholesky(Symmetric(H); check=false)
-        ck.info != 0 && return 1
-
-        α_β = ck \ [-Qu -B]
-        wse.α = α_β[:, 1]
-        wse.β = α_β[:, SVector{nx, Int64}(2:nx+1)]
-    end
-
-    return 0
-end
-
-# function factorize_ns!(H::SMatrix{nu, nu, T}, A::SMatrix{nu, nc, T}, Qu::SVector{nu, T}, c::SVector{nc, T},
-#             B::SMatrix{nu, nx, T}, cx::SMatrix{nc, nx, T}, wse::FilterDDPWorkspaceElement{T, nx, nu, nc},
-#             options::Options{T}) where {T, nx, nu, nc}
-#     if nc > 0
-#         # Q, R = qr([A SMatrix{nu, nu-nc, T}(zeros(T, nu, nu-nc))])
-#         H = Symmetric(H)
-
-#         Q = zeros(T, nu, nu)
-#         wsQ = Workspace(LAPACK.geqrf!, Q)
-#         Q[:, 1:nc] .= A
-#         LAPACK.geqrf!(wsQ, Q)
-#         LAPACK.orgqr!(wsQ, Q)
-
-#         Y = Q[:, SVector{nc, Int64}(1:nc)]
-#         Z = Q[:, SVector{nu-nc, Int64}(nc+1:nu)]
-        
-#         # AY = LowerTriangular(A' * Y)
-#         AY = A' * Y
-#         ws_AY = Workspace(LAPACK.getrf!, AY)
-#         # fk = lu(AY)
-
-#         α_β_y = Matrix([-c -cx])
-#         LAPACK.getrf!(ws_AY, AY)
-#         LAPACK.getrs!(ws_AY, 'N', AY, α_β_y)
-
-#         # α_β_y = fk \ [-c -cx]
-
-#         # M = Symmetric(Z' * H * Z)
-#         # ck = cholesky(M; check=false)
-#         # ck.info != 0 && return 1
-
-#         ZHZ_tmp = Matrix(Z' * H * Z)
-#         ws_ZHZ = Workspace(LAPACK.pstrf!, ZHZ_tmp)
-#         ZHZ_tmp, piv, rank_, info = LAPACK.pstrf!(ws_ZHZ, 'U', ZHZ_tmp, 1e-12)
-#         ch_ = CholeskyPivoted(ZHZ_tmp, 'U', piv, rank_, 1e-12, info)
-#         if info > 0
-#             return 1
-#         end
-#         α_β_z = Matrix(Z' * ([-Qu -B] - H * Y * α_β_y))
-#         ldiv!(ch_, α_β_z) # allocates because permute! call allocates
-
-#         # α_β_z = ck \ (Z' * ([-Qu -B] - H * Y * α_β_y))
-#         α_β = Y * α_β_y + Z * α_β_z
-#         wse.α = α_β[:, 1]
-#         wse.β = α_β[:, SVector{nx, Int64}(2:nx+1)]
-
-#         ψ_ω = Matrix((Y' * ([-Qu -B] - H * α_β)))
-#         LAPACK.getrs!(ws_AY, 'T', AY, ψ_ω)
-
-#         wse.ψ = ψ_ω[:, 1]
-#         wse.ω = ψ_ω[:, SVector{nx, Int64}(2:nx+1)]
-#     else
-#         ck = cholesky(Symmetric(H); check=false)
-#         ck.info != 0 && return 1
-
-#         α_β = ck \ [-Qu -B]
-#         wse.α = α_β[:, 1]
-#         wse.β = α_β[:, SVector{nx, Int64}(2:nx+1)]
-#     end
-
-#     return 0
-# end

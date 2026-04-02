@@ -1,36 +1,23 @@
-function forward_pass!(ocp::OCP{T, nx, nu, nc}, ws::FilterDDPWorkspace{T, nx, nu, nc}, data::SolverData{T},
+function forward_pass!(solver::Solver{T, nx, nu, nc}, ocp::OCP{T, nx, nu, nc}, data::SolverData{T},
             options::Options{T}; verbose=false) where {T, nx, nu, nc}
     data.l = 0  # line search iteration counter
     data.status = 0
     data.step_size = T(1.0)
-    ΔL = T(0.0)
+    ΔL = data.expected_change_L
     μ = data.μ
     τ = max(options.τ_min, T(1.0) - μ)
 
     θ_prev = data.primal_1_curr
     L_prev = data.barrier_lagrangian_curr
-    θ = θ_prev
     
-    ΔL = expected_change_lagrangian(ws)  # m in paper
-
     while data.step_size >= eps(T)
         γ = data.step_size
-        try
-            rollout!(ocp, ws, data, step_size=γ)
-        catch e
-            # reduces step size if NaN or Inf encountered
-            e isa DomainError && (data.step_size *= 0.5, continue)
-            rethrow(e)
-        end
-        
-        data.status = check_fraction_boundary(ocp, ws, τ, data.k)
+        rollout!(solver, ocp, data, τ, γ)
         data.status != 0 && (data.step_size *= 0.5, continue)
-
-        constraints!(ocp.constraints, ws; mode=:current)
         
         # used for sufficient decrease from current iterate step acceptance criterion
-        θ = constraint_violation_1norm(ws; mode=:current)
-        L = barrier_lagrangian!(ocp, ws, data; mode=:current)
+        θ = data.primal_1_next
+        L = data.barrier_lagrangian_next
 
         # check acceptability to filter
         data.status = !any(x -> (θ >= x[1] && L >= x[2]), data.filter) ? 0 : 3
@@ -47,81 +34,73 @@ function forward_pass!(ocp::OCP{T, nx, nu, nc}, ws::FilterDDPWorkspace{T, nx, nu
             data.status = suff ? 0 : 5
         end
         data.status != 0 && (data.step_size *= 0.5, data.l += 1, continue)  # failed, reduce step size
-        
-        data.barrier_lagrangian_next = L
-        data.primal_1_next = θ
         break
     end
     data.step_size < eps(T) && (data.status = 7)
     data.status != 0 && (verbose && (@warn "Line search failed to find a suitable iterate"))
 end
 
-function check_fraction_boundary(ocp::OCP{T, nx, nu, nc}, ws::FilterDDPWorkspace{T, nx, nu, nc}, τ::T, k) where {T, nx, nu, nc}
-    for (t, wse) in enumerate(ws)
-        zl, zl̄ = wse.current.zl, wse.nominal.zl
-        zu, zū = wse.current.zu, wse.nominal.zu
-        ul, ul̄ = wse.current.ul, wse.nominal.ul
-        uu, uū = wse.current.uu, wse.nominal.uu
+function rollout!(solver::Solver{T, nx, nu, nc}, ocp::OCP{T, nx, nu, nc}, data::SolverData{T}, τ::T, step_size::T) where {T, nx, nu, nc}
+    μ = data.μ
+    cl = ocp.control_limits
 
-        if any((ul̄ .* (1. - τ) .> ul) .* ocp.control_limits[t].maskl)
-            return 2
-        end
+    data.status = 0
+    data.primal_1_next = T(0.0)
+    data.barrier_lagrangian_next = T(0.0)
 
-        if any((uū .* (1. - τ) .> uu) .* ocp.control_limits[t].masku)
-            return 2
-        end
-
-        # if any(c * (1. - τ) > d for (c, d) in zip(ul̄, ul))
-        #     return 2
-        # end
-
-        # if any(c * (1. - τ) > d for (c, d) in zip(uū, uu))
-        #     return 2
-        # end
-
-        if any(c * (1. - τ) > d for (c, d) in zip(zl̄, zl))
-            return 2
-        end
-
-        if any(c * (1. - τ) > d for (c, d) in zip(zū, zu))
-            return 2
-        end
-    end
-    return 0
-end
-
-function expected_change_lagrangian(ws::FilterDDPWorkspace{T, nx, nu, nc}) where {T, nx, nu, nc}
-    ΔL = T(0.0)
-    for wse in ws
-        ΔL += dot(wse.Qû, wse.α)
-        ΔL += dot(wse.nominal.c, wse.ψ)
-    end
-    return ΔL
-end
-
-function rollout!(ocp::OCP{T, nx, nu, nc}, ws::FilterDDPWorkspace{T, nx, nu, nc}, data::SolverData{T}; step_size::T=1.0) where {T, nx, nu, nc}
-    ws[1].current.x = ws[1].nominal.x
-
+    x = solver.nominal[1].x
     for t in 1:ocp.N
-        δx = ws[t].current.x - ws[t].nominal.x
+        δx = x - solver.nominal[t].x
 
         # u[t] .= ū[t] + β[t] * (x[t] - x̄[t]) + step_size * α[t]
-        ws[t].current.u = ws[t].nominal.u + step_size .* ws[t].α + ws[t].β * δx
+        u = solver.nominal[t].u + step_size .* solver.update[t].α + solver.update[t].β * δx
 
         # ϕ[t] .= ϕ̄[t] + ω[t] * (x[t] - x̄[t]) + step_size * ψ[t]
-        ws[t].current.ϕ = ws[t].nominal.ϕ + step_size .* ws[t].ψ + ws[t].ω * δx
+        ϕ = solver.nominal[t].ϕ + step_size .* solver.update[t].ψ + solver.update[t].ω * δx
 
-        ws[t].current.zl = ws[t].nominal.zl + step_size .* ws[t].χl + ws[t].ζl * δx
-        ws[t].current.zu = ws[t].nominal.zu + step_size .* ws[t].χu + ws[t].ζu * δx
+        zl = solver.nominal[t].zl + step_size .* solver.update[t].χl + solver.update[t].ζl * δx
+        zu = solver.nominal[t].zu + step_size .* solver.update[t].χu + solver.update[t].ζu * δx
         
-        fn_eval_time_ = time()
-        if t < ocp.N
-            dynamics!(ocp.dynamics[t], ws[t], ws[t+1], mode=:current)
+        # update current trajectory
+        solver.current[t] = TrajectoryElement{T, nx, nu, nc}(x, u, ϕ, zl, zu)
+
+        # evaluate constraints and violation
+        if nc > 0
+            c = ocp.constraints.c(x, u)
+            data.primal_1_next += norm(c, 1)
+            data.barrier_lagrangian_next += dot(c, ϕ)
         end
-        
-        # evaluate inequality constraints
-        ws[t].current.ul = ws[t].current.u - ocp.control_limits[t].l
-        ws[t].current.uu = ocp.control_limits[t].u - ws[t].current.u
-        data.fn_eval_time += time() - fn_eval_time_
+
+        # check frac-to-boundary condition
+        ul = u - cl.l
+        uu = cl.u - u
+        ul̄ = solver.nominal[t].u - cl.l
+        uū = cl.u - solver.nominal[t].u
+
+        if any((ul̄ .* (1. - τ) .> ul) .* cl.maskl)
+            data.status = 2
+            return
+        end
+        if any((uū .* (1. - τ) .> uu) .* cl.masku)
+            data.status = 2
+            return
+        end
+        if any(solver.nominal[t].zl .* (1. - τ) .> zl)
+            data.status = 2
+            return
+        end
+        if any(solver.nominal[t].zu .* (1. - τ) .> zu)
+            data.status = 2
+            return
+        end
+
+        # evaluate barrier lagrangian
+        objective = t == ocp.N ? ocp.term_objective : ocp.stage_objective        
+        data.barrier_lagrangian_next -= μ* (dot(log.(ul), cl.maskl) + dot(log.(uu), cl.masku))
+        data.barrier_lagrangian_next += objective.l(x, u)[1]
+
+        if t < ocp.N
+            x = solver.ocp.dynamics.f(x, u)
+        end
     end
 end
