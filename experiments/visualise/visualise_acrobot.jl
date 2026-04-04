@@ -1,127 +1,82 @@
-# taken from https://github.com/thowell/optimization_dynamics/blob/main/src/models/acrobot/visuals.jl
+include("../models/acrobot.jl")
 
-include("visualise.jl")
+# joints and ee points 
+function acrobot_positions(q, p)
 
-# visualization
-function visualize!(vis, model::DoublePendulum, x;
-    color=Colors.RGBA(0.0, 0.0, 0.0, 1.0),
-    r = 0.1, Δt = 0.1)
-default_background!(vis)
+    θ1 = q[1]
+    θ2 = q[2]
 
-i = 1
-l1 = Cylinder(Point3d(0.0, 0.0, 0.0), Point3d(0.0, 0.0, model.l1),
-    convert(Float32, 0.025))
-setobject!(vis["l1$i"], l1, MeshPhongMaterial(color = color))
-l2 = Cylinder(Point3d(0.0,0.0,0.0), Point3d(0.0, 0.0, model.l2),
-    convert(Float32, 0.025))
-setobject!(vis["l2$i"], l2, MeshPhongMaterial(color = color))
+    l1 = p.l1
+    l2 = p.l2
 
-setobject!(vis["elbow$i"], Sphere(Point3d(0.0),
-    convert(Float32, 0.05)),
-    MeshPhongMaterial(color = color))
-setobject!(vis["ee$i"], Sphere(Point3d(0.0),
-    convert(Float32, 0.05)),
-    MeshPhongMaterial(color = color))
+    p0 = (0, 0)
 
-anim = MeshCat.Animation(vis; fps=convert(Int, floor(1.0 / Δt)))
+    p1 = (
+        l1 * sin(θ1),
+       -l1 * cos(θ1)
+    )
 
-T = length(x)
-for t = 1:T
+    p2 = (
+        p1[1] + l2 * sin(θ1 + θ2),
+        p1[2] - l2 * cos(θ1 + θ2)
+    )
 
-    MeshCat.atframe(anim,t) do
-        p_mid = [kinematics_elbow(model, x[t])[1], 0.0, kinematics_elbow(model, x[t])[2]]
-        p_ee = [kinematics(model, x[t])[1], 0.0, kinematics(model, x[t])[2]]
+    return p0, p1, p2
+end
 
-        settransform!(vis["l1$i"], cable_transform(zeros(3), p_mid))
-        settransform!(vis["l2$i"], cable_transform(p_mid, p_ee))
+function animate_acrobot(q_traj, dt, params::DoublePendulum{T};
+                         trail = true,
+                         fps = 30,
+                         filename = "acrobot.gif",
+                         results_dir = "results") where T
 
-        settransform!(vis["elbow$i"], Translation(p_mid))
-        settransform!(vis["ee$i"], Translation(p_ee))
+    print("\nanimating..")
+
+    isdir(results_dir) || mkpath(results_dir)
+    filepath = joinpath(results_dir, filename)
+
+    nframes = length(q_traj)
+    freq = 1.0 / dt
+
+    frame_step = freq > fps ? round(Int, freq / fps) : 1
+    fps        = freq > fps ? fps : freq
+    t = 0.0
+
+    L = params.l1 + params.l2
+
+    anim = @animate for k = 1:frame_step:nframes
+
+        q = q_traj[k]
+
+        p0, p1, p2 = acrobot_positions(q, params)
+
+        plot(
+            xlims = (-L-0.2, L+0.2),
+            ylims = (-L-0.2, L+0.2),
+            aspect_ratio = :equal,
+            legend = false,
+            title = "Acrobot"
+        )
+
+        # links
+        plot!([p0[1], p1[1]], [p0[2], p1[2]], lw = 4, color = :black)
+        plot!([p1[1], p2[1]], [p1[2], p2[2]], lw = 4, color = :black)
+
+        # joints & ee
+        scatter!([p0[1], p1[1], p2[1]], [p0[2], p1[2], p2[2]], ms = 6, color = :red)
+
+        # trail of ee
+        if trail && k > 1
+            pts = [acrobot_positions(q_traj[j], params)[3] for j in 1:k]
+            plot!(first.(pts), last.(pts), lw = 1, color = :gray, alpha = 0.4)
+        end
+
+        annotate!(L, L,text(@sprintf("t = %.2f s", t), :right, 12, :black))
+
+        t = k * dt
     end
-end
 
-settransform!(vis["/Cameras/default"],
-    compose(Translation(0.0, 0.0, -1.0), LinearMap(RotZ(- pi / 2))))
-setvisible!(vis["/Grid"], true)
+    gif(anim, filepath, fps = fps)
 
-MeshCat.setanimation!(vis, anim)
-end
-
-# visualization
-function _create_acrobot!(vis, model::DoublePendulum;
-    tl = 1.0,
-    limit_color = Colors.RGBA(0.0, 1.0, 0.0, tl),
-    color = Colors.RGBA(0.0, 0.0, 0.0, tl),
-    i = 0,
-    r = 0.1)
-
-l1 = Cylinder(Point3d(0.0, 0.0, 0.0), Point3d(0.0, 0.0, model.l1),
-    convert(Float32, 0.025))
-setobject!(vis["l1_$i"], l1, MeshPhongMaterial(color = color))
-l2 = Cylinder(Point3d(0.0,0.0,0.0), Point3d(0.0, 0.0, model.l2),
-    convert(Float32, 0.025))
-setobject!(vis["l2_$i"], l2, MeshPhongMaterial(color = color))
-
-setobject!(vis["elbow_nominal_$i"], Sphere(Point3d(0.0),
-    convert(Float32, 0.05)),
-    MeshPhongMaterial(color = Colors.RGBA(0.0, 0.0, 0.0, tl)))
-setobject!(vis["elbow_limit_$i"], Sphere(Point3d(0.0),
-    convert(Float32, 0.05)),
-    MeshPhongMaterial(color = limit_color))
-setobject!(vis["ee_$i"], Sphere(Point3d(0.0),
-    convert(Float32, 0.05)),
-    MeshPhongMaterial(color = Colors.RGBA(0.0, 0.0, 0.0, tl)))
-end
-
-function _set_acrobot!(vis, model::DoublePendulum, x;
-    i = 0, ϵ = 1.0e-1)
-
-p_mid = [kinematics_elbow(model, x)[1], 0.0, kinematics_elbow(model, x)[2]]
-p_ee = [kinematics(model, x)[1], 0.0, kinematics(model, x)[2]]
-
-settransform!(vis["l1_$i"], cable_transform(zeros(3), p_mid))
-settransform!(vis["l2_$i"], cable_transform(p_mid, p_ee))
-
-settransform!(vis["elbow_nominal_$i"], Translation(p_mid))
-settransform!(vis["elbow_limit_$i"], Translation(p_mid))
-settransform!(vis["ee_$i"], Translation(p_ee))
-
-if x[2] <= -0.5 * π + ϵ || x[2] >= 0.5 * π - ϵ
-    setvisible!(vis["elbow_nominal_$i"], false)
-    setvisible!(vis["elbow_limit_$i"], true)
-else
-    setvisible!(vis["elbow_nominal_$i"], true)
-    setvisible!(vis["elbow_limit_$i"], false)
-end
-end
-
-# visualization
-function visualize_elbow!(vis, model::DoublePendulum, x;
-    tl = 1.0,
-    i = 0,
-    color = Colors.RGBA(0.0, 0.0, 0.0, 1.0),
-    limit_color = Colors.RGBA(0.0, 1.0, 0.0, tl),
-    r = 0.1, Δt = 0.1,
-    ϵ = 1.0e-1)
-
-_create_acrobot!(vis, model,
-    tl = tl,
-    color = color,
-    limit_color = limit_color,
-    i = i,
-    r = r)
-
-anim = MeshCat.Animation(convert(Int, floor(1.0 / Δt)))
-
-T = length(x)
-for t = 1:T
-    MeshCat.atframe(anim,t) do
-        _set_acrobot!(vis, model, x[t], i = i, ϵ = ϵ)
-    end
-end
-
-# settransform!(vis["/Cameras/default"],
-#    compose(Translation(0.0 , 0.0 , 0.0), LinearMap(RotZ(pi / 2.0))))
-
-MeshCat.setanimation!(vis, anim)
+    print("   -> animation finished.")
 end

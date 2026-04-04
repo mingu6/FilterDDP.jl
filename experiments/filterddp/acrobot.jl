@@ -2,7 +2,6 @@ using FilterDDP
 using LinearAlgebra
 using Random
 using Plots
-using MeshCat
 using Printf
 using LaTeXStrings
 using StaticArrays
@@ -22,12 +21,7 @@ const nx::Int64 = 4
 const nu::Int64 = 1
 
 include("../models/acrobot.jl")
-
-if visualise
-	include("../visualise/visualise_acrobot.jl")
-	!@isdefined(vis) && (vis = Visualizer())
-	render(vis)
-end
+visualise && include("../visualise/visualise_acrobot.jl")
 
 options = Options{T}(verbose=verbose, optimality_tolerance=1e-7)
 
@@ -92,12 +86,12 @@ for seed = 1:n_ocp
 
 	push!(params, T[acrobot.m1, acrobot.I1, acrobot.l1, acrobot.lc1, acrobot.m2, acrobot.I2, acrobot.l2, acrobot.lc2])
 
-	# ## Visualise trajectory using MeshCat
+	# ## Animate trajectory
 
 	if visualise && seed == 1
-        x_sol, u_sol = get_trajectory(solver)
-		q_sol = state_to_configuration(x_sol)
-		visualize!(vis, acrobot, q_sol, Δt=Δ);
+		x_sol, u_sol = get_trajectory(solver)
+		q_sol = [x[1:2] for x in x_sol]
+		animate_acrobot(q_sol, Δ, acrobot);
 	end
 end
 

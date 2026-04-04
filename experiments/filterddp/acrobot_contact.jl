@@ -2,7 +2,6 @@ using FilterDDP
 using LinearAlgebra
 using Random
 using Plots
-using MeshCat
 using Printf
 using LaTeXStrings
 using StaticArrays
@@ -21,12 +20,7 @@ const nx::Int64 = 4
 const nu::Int64 = 9
 
 include("../models/acrobot.jl")
-
-if visualise
-	include("../visualise/visualise_acrobot.jl")
-	!@isdefined(vis) && (vis = Visualizer())
-	render(vis)
-end
+visualise && include("../visualise/visualise_acrobot.jl")
 
 qN = SA[π; 0.0]
 
@@ -127,14 +121,16 @@ for seed = 1:n_ocp
 			legendfontsize=16, linewidth=2, xlabelfontsize=16, linestyle=[:solid :solid :dash :dash], linecolor=[1 2 1 2], 
 			legend_columns=-1, fontfamily="Computer Modern",
 			background_color_legend = nothing, label=[L"$s_t^{(1)}$" L"$s_t^{(2)}$" L"$\lambda^{(1)}_t$" L"$\lambda^{(2)}_t$"])
+		isdir("plots") || mkpath("plots")
 		savefig("plots/acrobot_contact_FilterDDP.pdf")
 	end
 
-	# ## Visualise trajectory using MeshCat
+	# ## Animate trajectory
 
 	if visualise && seed == 1
-		q_sol = state_to_configuration(x_sol)
-		visualize!(vis, acrobot_impact, q_sol, Δt=Δ);
+		x_sol, u_sol = get_trajectory(solver)
+		q_sol = [x[1:nq] for x in x_sol]
+		animate_acrobot(q_sol, Δ, acrobot_impact; filename="acrobot_contact.gif");
 	end
 end
 

@@ -2,7 +2,6 @@ using FilterDDP
 using LinearAlgebra
 using Random
 using Plots
-using MeshCat
 using Printf
 using LaTeXStrings
 using StaticArrays
@@ -21,12 +20,7 @@ const nx::Int64 = 4
 const nu::Int64 = 21
 
 include("../models/cartpole.jl")
-
-if visualise
-	include("../visualise/visualise_cartpole.jl")
-	!@isdefined(vis) && (vis = Visualizer())
-	render(vis)
-end
+visualise && include("../visualise/visualise_cartpole.jl")
 
 options = Options{T}(verbose=verbose, optimality_tolerance=1e-7)
 
@@ -110,13 +104,12 @@ for seed = 1:n_ocp
 
     push!(params, [cartpole.mc, cartpole.mp, cartpole.l, cartpole.friction[1], cartpole.friction[2]])
 
-    # ## Visualise solution
+    # ## Animate trajectory
 
     if visualise && seed == 1
         x_sol, u_sol = get_trajectory(solver)
-        
         q_sol = [x[1:nq] for x in x_sol]
-        visualize!(vis, cartpole, q_sol, Δt=Δ);
+        animate_cartpole(q_sol, Δ, cartpole);
     end
 
     # ## Plot solution
@@ -128,6 +121,7 @@ for seed = 1:n_ocp
 		λ1 = map(u -> (u[4] - u[5]) * 3.5, u_sol[1:end-1])
 		λ2 = map(u -> (u[6] - u[7]) * 15, u_sol[1:end-1])
         F = map(u -> u[1], u_sol[1:end-1])
+        isdir("plots") || mkpath("plots")
 		plot(range(0, Δ * (N-1), N-1), [qd1 qd2 λ1 λ2 F], xtickfontsize=16, ytickfontsize=16, xlabel=L"$t$", ylims=(-10,14),
 			legendfontsize=14, linewidth=2, xlabelfontsize=16, linestyle=[:solid :solid :dash :dash :solid], linecolor=[1 2 1 2 3], 
             legendposition=:top, legendtitleposition=:left, legend_columns=-1, fontfamily="Computer Modern",

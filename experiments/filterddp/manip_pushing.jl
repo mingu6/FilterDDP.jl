@@ -165,6 +165,7 @@ for seed = 1:n_ocp
 			legendfontsize=14, linewidth=2, xlabelfontsize=14, ylabelfontsize=14, linestyle=[:dash :solid :solid], linecolor=[2 3 3], 
             legendposition=:topright, legendtitleposition=:left, ylims=(-0.10, 0.10), alpha=[1. 0.5 0.5], legend_columns=-1, fontfamily="Computer Modern",
 			background_color_legend = nothing, label= [L"$f_t^T$" L"$\pm c_f f_t^n$" false])
+        isdir("plots") || mkpath("plots")
 		savefig("plots/pushing_FilterDDP.pdf")
 	end
 
@@ -199,6 +200,7 @@ for seed = 1:n_ocp
                     legend = false, fillalpha = 0.2, aspect_ratio = 1)
             scatter!([xN[1]], [xN[2]], markershape=:star, color=:gold, markersize=10)
         end
+        isdir("plots") || mkpath("plots")
         savefig("plots/pushing_qual_$seed.pdf")
     end
 end

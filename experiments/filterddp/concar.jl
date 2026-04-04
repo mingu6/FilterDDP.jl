@@ -136,7 +136,10 @@ for seed = 1:n_ocp
     else
         push!(results, [seed, solver.data.k, solver.data.status, solver.data.objective, solver.data.primal_inf])
     end
-    visualise && savefig("plots/concar_FilterDDP_$seed.pdf")
+    if visualise
+        isdir("plots") || mkpath("plots")
+        savefig("plots/concar_FilterDDP_$seed.pdf")
+    end
 
     push!(params, [F_lim; τ_lim; obs_1; obs_2; obs_3; obs_4; x1])
 end

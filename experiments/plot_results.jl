@@ -1,7 +1,7 @@
 using StatsPlots
 using Statistics
 
-problemclass = "acrobot_contact" # acrobot_contact, cartpole_friction, concar_quad, concar, pushing_1_obs
+problemclass = "acrobot_contact" # acrobot_contact, cartpole_friction, concar_quad, concar, manip_pushing
 fs_x = 19
 fs_y = 22
 font_ = "Computer Modern"

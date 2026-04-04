@@ -1,78 +1,109 @@
-# taken from https://github.com/thowell/optimization_dynamics/blob/main/src/models/cartpole/visuals.jl
+include("../models/cartpole.jl")
 
-include("visualise.jl")
+# p0 = left cart corner, p1 = pivot point, p2 = ee
+function cartpole_positions(q, p::Cartpole{T}; cart_w = 0.6, cart_h = 0.25, cart_y = 0.0) where T
+    pos = q[1]
+    θ   = q[2]
 
-function _create_cartpole!(vis, model;
-    i = 0,
-    tl = 1.0,
-    color = Colors.RGBA(0, 0, 0, tl))
+    l = p.l
 
-l2 = Cylinder(Point3d(-model.l * 10.0, 0.0, 0.0),
-    Point3d(model.l * 10.0, 0.0, 0.0),
-    convert(Float32, 0.0125))
+    # cart rectangle corners (for plotting)
+    left  = pos - cart_w/2
+    right = pos + cart_w/2
+    bottom = cart_y
+    top    = cart_y + cart_h
 
-setobject!(vis["slider_$i"], l2, MeshPhongMaterial(color = Colors.RGBA(0.0, 0.0, 0.0, tl)))
+    # choose pivot at the top center of cart
+    pivot = (pos, top)
 
-l1 = Cylinder(Point3d(0.0, 0.0, 0.0),
-    Point3d(0.0, 0.0, model.l),
-    convert(Float32, 0.025))
+    # θ=0 downward convention
+    tip = (
+        pivot[1] + l * sin(θ),
+        pivot[2] - l * cos(θ)
+    )
 
-setobject!(vis["arm_$i"], l1,
-    MeshPhongMaterial(color = Colors.RGBA(0.0, 0.0, 0.0, tl)))
+    # useful points for drawing cart as a box
+    p_bl = (left,  bottom)
+    p_br = (right, bottom)
+    p_tr = (right, top)
+    p_tl = (left,  top)
 
-setobject!(vis["base_$i"], HyperSphere(Point3d(0.0),
-    convert(Float64, 0.1)),
-    MeshPhongMaterial(color = color))
-
-setobject!(vis["ee_$i"], HyperSphere(Point3d(0.0),
-    convert(Float64, 0.05)),
-    MeshPhongMaterial(color = color))
+    return (p_bl, p_br, p_tr, p_tl), pivot, tip
 end
 
-function _set_cartpole!(vis, model, x; i = 0)
-    px = x[1] + model.l * sin(x[2])
-    pz = -model.l * cos(x[2])
-    cable_transform([x[1]; 0;0], [px; 0.0; pz])
-    settransform!(vis["arm_$i"], cable_transform([x[1]; 0;0], [px; 0.0; pz]))
-    settransform!(vis["base_$i"], Translation([x[1]; 0.0; 0.0]))
-    settransform!(vis["ee_$i"], Translation([px; 0.0; pz]))
-end
+function animate_cartpole(q_traj, dt, params::Cartpole{T};
+                          trail = true, fps = 30,
+                          filename = "cartpole.gif",
+                          results_dir = "results") where T
 
-function visualize!(vis, model, q;
-    i = 0,
-    tl = 1.0,
-    Δt = 0.1,
-    color = Colors.RGBA(0,0,0,1.0))
+    print("\nanimating..")
 
-default_background!(vis)
-_create_cartpole!(vis, model, i = i, color = color, tl = tl)
+    cart_w = 0.6
+    cart_h = 0.25
+    cart_y = 0.0
+    pad = 0.5
 
-anim = MeshCat.Animation(vis; fps=convert(Int, floor(1.0 / Δt)))
-nq = length(q)
+    isdir(results_dir) || mkpath(results_dir)
+    filepath = joinpath(results_dir, filename)
 
-for t = 1:nq
-    MeshCat.atframe(anim,t) do
-        # _set_cartpole!(vis, model, q[t], i = i)
-        px = q[t][1] + model.l * sin(q[t][2])
-        pz = -model.l * cos(q[t][2])
-        c2 = Vector{Float64}()
-        push!(c2, px)
-        push!(c2, 0.0)
-        push!(c2, pz)
-        c1 = Vector{Float64}()
-        push!(c1, q[t][1])
-        push!(c1, 0.0)
-        push!(c1, 0.0)
-        cable_transform(c1, c2)
-        settransform!(vis["arm_$i"], cable_transform(c1, c2))
-        settransform!(vis["base_$i"], Translation(c1))
-        settransform!(vis["ee_$i"], Translation(c2))
+    nframes = length(q_traj)
+    freq = 1.0 / dt
+
+    frame_step = freq > fps ? round(Int, freq / fps) : 1
+    fps        = freq > fps ? fps : freq
+    t = 0.0
+
+    xs = first.(q_traj)
+    xmin = minimum(xs) - (params.l + pad)
+    xmax = maximum(xs) + (params.l + pad)
+
+    ymin = cart_y - (params.l + pad)
+    ymax = cart_y + cart_h + (params.l + pad)
+
+    anim = @animate for k = 1:frame_step:nframes
+
+        q = q_traj[k]
+
+        cart_pts, pivot, tip = cartpole_positions(
+            q, params; cart_w=cart_w, cart_h=cart_h, cart_y=cart_y
+        )
+
+        plot(
+            xlims = (xmin, xmax),
+            ylims = (ymin, ymax),
+            aspect_ratio = :equal,
+            legend = false,
+            title = "Cartpole"
+        )
+
+        # ground line
+        plot!([xmin, xmax], [cart_y, cart_y], lw=2, color=:black)
+
+        # cart (rectangle)
+        xs_cart = [cart_pts[1][1], cart_pts[2][1], cart_pts[3][1], cart_pts[4][1], cart_pts[1][1]]
+        ys_cart = [cart_pts[1][2], cart_pts[2][2], cart_pts[3][2], cart_pts[4][2], cart_pts[1][2]]
+        plot!(xs_cart, ys_cart, lw=3, color=:black)
+
+        # pole (line)
+        plot!([pivot[1], tip[1]], [pivot[2], tip[2]], lw=4, color=:black)
+
+        # joints/masses
+        scatter!([pivot[1], tip[1]], [pivot[2], tip[2]], ms=6, color=:red)
+
+        # trail of pole tip
+        if trail && k > 1
+            tips = [cartpole_positions(q_traj[j], params;
+                                       cart_w=cart_w, cart_h=cart_h, cart_y=cart_y)[3]
+                    for j in 1:k]
+            plot!(first.(tips), last.(tips), lw=1, color=:gray, alpha=0.4)
+        end
+
+        annotate!(xmax, ymax, text(@sprintf("t = %.2f s", t), :right, 12, :black))
+        
+        t = k * dt
     end
-end
 
-settransform!(vis["/Cameras/default"],
-    compose(Translation(0.0, 0.0, -1.0), LinearMap(RotZ(- pi / 2))))
-setvisible!(vis["/Grid"], false)
+    gif(anim, filepath, fps=fps)
 
-MeshCat.setanimation!(vis,anim)
+    print("   -> animation finished.")
 end

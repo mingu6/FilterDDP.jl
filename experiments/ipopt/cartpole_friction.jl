@@ -2,27 +2,20 @@ using JuMP
 import Ipopt
 using Random
 using Plots
-using MeshCat
 using Suppressor
 using Printf
 using BenchmarkTools
 
 visualise = false
 output = false
-benchmark = true
+benchmark = false
 bfgs = false
-n_benchmark = 10
 
 print_level = output ? 5 : 4
 
 include("ipopt_parse.jl")
 include("../models/cartpole.jl")
-
-if visualise
-    include("../visualise/visualise_cartpole.jl")
-    !@isdefined(vis) && (vis = Visualizer())
-    render(vis)
-end
+visualise && include("../visualise/visualise_cartpole.jl")
 
 Δ = 0.05
 N = 101
@@ -166,7 +159,7 @@ for seed = 1:n_ocp
         xv = value.(x)
         x_sol = [xv[k, :] for k in 1:N]
         q_sol = [x[1:nq] for x in x_sol]
-        visualize!(vis, cartpole, q_sol, Δt=Δ);
+        animate_cartpole(q_sol, Δ, cartpole);
     end
 end
 

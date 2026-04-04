@@ -2,7 +2,6 @@ using JuMP
 import Ipopt
 using Random
 using Plots
-using MeshCat
 using Suppressor
 using Printf
 using LaTeXStrings
@@ -21,12 +20,7 @@ n_ocp = 100
 
 include("../models/acrobot.jl")
 include("ipopt_parse.jl")
-
-if visualise
-	include("../visualise/visualise_acrobot.jl")
-	!@isdefined(vis) && (vis = Visualizer())
-	render(vis)
-end
+visualise && include("../visualise/visualise_acrobot.jl")
 
 qN = [π; 0.0]
 xN = [qN; qN]
@@ -178,14 +172,15 @@ for seed = 1:n_ocp
 		plot(range(0, Δ * (N-1), N-1), [s1 s2 λ1 λ2], xtickfontsize=16, ytickfontsize=16, xlabel=L"$t$", ylims=(0,6), fontfamily="Computer Modern",
 			legendfontsize=16, linewidth=2, xlabelfontsize=16, linestyle=[:solid :solid :dot :dot], linecolor=[1 2 1 2], legend_columns=-1,
 			background_color_legend = nothing, label=[L"$s_t^{(1)}$" L"$s_t^{(2)}$" L"$\lambda^{(1)}_t$" L"$\lambda^{(2)}_t$"])
+		isdir("plots") || mkpath("plots")
 		savefig("plots/acrobot_contact_IPOPT.pdf")
 	end
 
 	# ## Visualise trajectory using MeshCat
 
 	if visualise && seed == n_ocp
-		q_sol = state_to_configuration(x_sol)
-		visualize!(vis, acrobot_impact, q_sol, Δt=Δ);
+		q_sol = [x[1:nq] for x in x_sol]
+		animate_acrobot(q_sol, Δ, acrobot_impact; filename="acrobot_contact.gif");
 	end
 end
 
