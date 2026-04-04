@@ -6,12 +6,12 @@ using MeshCat
 using Suppressor
 using Printf
 using LaTeXStrings
+using BenchmarkTools
 
 visualise = false
 output = false
 benchmark = false
 bfgs = false
-n_benchmark = 10
 
 print_level = output ? 5 : 4
 
@@ -155,24 +155,16 @@ for seed = 1:n_ocp
 	objective, constr_viol, n_iter, succ, _, _ = parse_results_ipopt(ipopt_out)
 	
 	if benchmark
-		set_attribute(model, "print_level", 4)
-		solver_time_ = 0.0
-		wall_time_ = 0.0
-		for i = 1:n_benchmark
-			ipopt_out = @capture_out optimize!(model)
-			_, _, _, _, solver_time, wall_time = parse_results_ipopt(ipopt_out)
-			solver_time_ += solver_time
-			wall_time_ += wall_time
-		end
-		solver_time_ /= n_benchmark
-		wall_time_ /= n_benchmark
-		push!(results, [seed, n_iter, succ, objective, constr_viol, wall_time_, solver_time_])
+		set_attribute(model, "print_level", 0)
+		b = @benchmark optimize!($model)
+		wall_time = median(b.times) / 1e6
+		push!(results, [seed, n_iter, succ, objective, constr_viol, wall_time])
 	else
 		push!(results, [seed, n_iter, succ, objective, constr_viol])
 	end
 
 	# ## Plot solution
-	if seed == n_ocp
+	if seed == n_ocp && visualise
 		xv = value.(x)
 		x_sol = [xv[k, :] for k in 1:N]
 		uv = value.(u)
@@ -199,11 +191,11 @@ end
 
 fname = bfgs ? "results/bfgs_acrobot_contact.txt" : "results/acrobot_contact.txt"
 open(fname, "w") do io
-	@printf(io, " seed  iterations  status     objective           primal        wall (ms)   solver(ms)  \n")
+	@printf(io, " seed  iterations  status     objective           primal        wall (ms)   \n")
     for i = 1:n_ocp
         if benchmark
-            @printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f        %5.1f  \n", Int64(results[i][1]), Int64(results[i][2]), Bool(results[i][3]),
-                            results[i][4], results[i][5], results[i][6], results[i][7])
+            @printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f      \n", Int64(results[i][1]), Int64(results[i][2]), Bool(results[i][3]),
+                            results[i][4], results[i][5], results[i][6])
         else
             @printf(io, " %2s     %5s      %5s    %.8e    %.8e \n",  Int64(results[i][1]), Int64(results[i][2]), Bool(results[i][3]), results[i][4], results[i][5])
         end

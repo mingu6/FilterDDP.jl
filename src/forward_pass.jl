@@ -69,14 +69,9 @@ function rollout!(solver::Solver{T, nx, nu, nc, nux, ncx}, ocp::OCP{T, nx, nu, n
 
         δx = x - x̄
 
-        # u[t] .= ū[t] + β[t] * (x[t] - x̄[t]) + step_size * α[t]
         u = ū + step_size .* α + β * δx
-
-        # ϕ[t] .= ϕ̄[t] + ω[t] * (x[t] - x̄[t]) + step_size * ψ[t]
         ϕ = ϕ̄  + step_size .* ψ + ω * δx
-
         zl = zl̄ + step_size .* χl + ζl * δx
-
         zu = zū + step_size .* χu + ζu * δx
         
         # update current trajectory
@@ -113,10 +108,8 @@ function rollout!(solver::Solver{T, nx, nu, nc, nux, ncx}, ocp::OCP{T, nx, nu, n
         end
 
         # evaluate barrier lagrangian
-        dl = dot(log.(ul), cl.maskl)
-        du = dot(log.(uu), cl.masku)
-        data.barrier_lagrangian_next -= dl * μ
-        data.barrier_lagrangian_next -= du * μ
+        data.barrier_lagrangian_next -= μ * dot(log.(ul), cl.maskl)
+        data.barrier_lagrangian_next -= μ * dot(log.(uu), cl.masku)
         if t == ocp.N
             data.barrier_lagrangian_next += ocp.term_objective.l(x, u)[1]
         else

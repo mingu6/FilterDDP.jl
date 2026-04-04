@@ -23,7 +23,7 @@ solver.reg_min = 1e-5
 
 res = []
 
-with open("../ipddp2/params/pushing_1_obs.txt", 'r') as file:
+with open("../filterddp/params/manip_pushing.txt", 'r') as file:
     for exper_ind, line in enumerate(file):
         params = [float(num_str) for num_str in line.split()]
         zx, zy, c, mu_fric = params[:4]
@@ -230,6 +230,6 @@ print("Average cost: ", cost / len(res))
 print("Average violation: ", viol / len(res))
 print("Successes: ", succ)
 
-with open("results/pushing_1_obs.txt", 'w') as file:
+with open("results/manip_pushing.txt", 'w') as file:
     for line in res:
         file.write(f"{' '.join(line)}\n")

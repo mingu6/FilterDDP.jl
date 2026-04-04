@@ -203,7 +203,7 @@ for seed = 1:n_ocp
     end
 end
 
-open("results/pushing_1_obs.txt", "w") do io
+open("results/manip_pushing.txt", "w") do io
 	@printf(io, " seed  iterations  status     objective           primal        wall (ms)   \n")
     for i = 1:length(results)
         if benchmark
@@ -216,7 +216,7 @@ open("results/pushing_1_obs.txt", "w") do io
 end
 
 # save parameters of each experiment for ProxDDP comparison
-open("params/pushing_1_obs.txt", "w") do io
+open("params/manip_pushing.txt", "w") do io
     for i = 1:n_ocp
         println(io, join(string.(params[i]), " "))
     end
