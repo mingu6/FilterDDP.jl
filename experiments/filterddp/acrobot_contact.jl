@@ -6,16 +6,19 @@ using MeshCat
 using Printf
 using LaTeXStrings
 using StaticArrays
+using BenchmarkTools
 
 visualise = false
 benchmark = false
 verbose = true
-n_benchmark = 10
 
 T = Float64
 Δ = 0.05
 N = 101
-n_ocp = 1
+n_ocp = 100
+
+const nx::Int64 = 4
+const nu::Int64 = 9
 
 include("../models/acrobot.jl")
 
@@ -49,21 +52,18 @@ for seed = 1:n_ocp
 		9.81, 0.0, 0.0)
 
 	nq = acrobot_impact.nq
-	nc = acrobot_impact.nc
 	nτ = acrobot_impact.nu
-	nx = 2 * nq
-	nu = nτ + nq + 3 * nc
 
 	# ## Dynamics - implicit variational integrator (midpoint)
 
 	f = (x, u) -> [x[nq .+ (1:nq)]; u[nτ .+ (1:nq)]]
-	dyn = Dynamics(T, f, nx, nu)
+	dyn = Dynamics(f, nx, nu)
 
 	# ## Objective
 
 	function l(x, u)
 		τ = u[1]
-		s = u[(nτ + nq + 2 * nc) .+ (1:nc)]
+		s = u[(nτ + nq + 4) .+ (1:2)]
 		J = 0.01 * Δ * τ * τ + 2. * sum(s)
 		return J
 	end
@@ -78,22 +78,22 @@ for seed = 1:n_ocp
 		J += 0.01 * u' * u
 		return J
 	end
-	stage_obj = Objective(T, l, nx, nu)
-	term_obj = Objective(T, lN, nx, nu)
+	stage_obj = Objective(l, nx, nu)
+	term_obj = Objective(lN, nx, nu)
 
 	# ## Constraints
 
 	c = (x, u) -> implicit_contact_dynamics_slack(acrobot_impact, x, u, Δ)
-	constraints = EqualityConstraints(T, c, nx, nu)
+	constraints = EqualityConstraints(c, nx, nu)
 
 	# ## Control Limits
 
-	cl = ControlLimits(
-		SVector{nu, T}([-T(8.0); -T(Inf) * ones(T, nq);          zeros(T, 3 * nc)]),
-		SVector{nu, T}([ T(8.0);  T(Inf) * ones(T, nq); T(Inf) * ones(T, 3 * nc)])
+	control_limits = ControlLimits(
+		SVector{nu, T}([-T(8.0); -T(Inf) * ones(T, nq);          zeros(T, 6)]),
+		SVector{nu, T}([ T(8.0);  T(Inf) * ones(T, nq); T(Inf) * ones(T, 6)])
 	)
 
-	ocp = OCP(N, stage_obj, term_obj, dyn; constraints=constraints, control_limits=cl)
+	ocp = build_ocp(N, stage_obj, term_obj, dyn, constraints, control_limits)
 	solver = Solver(ocp; options=options)
 	solver.options.verbose = verbose
 
@@ -105,16 +105,9 @@ for seed = 1:n_ocp
 
 	if benchmark
 		solver.options.verbose = false
-		solver_time = 0.0
-		wall_time = 0.0
-		for i in 1:n_benchmark
-			solve!(solver, x1, ū)
-			solver_time += solver.data.solver_time
-			wall_time += solver.data.wall_time
-		end
-		solver_time /= n_benchmark
-		wall_time /= n_benchmark
-		push!(results, [seed, solver.data.k, solver.data.status, solver.data.objective, solver.data.primal_inf, wall_time, solver_time])
+		b = @benchmark solve!($solver, $x1, $ū)
+		wall_time = median(b.times) / 1e6
+		push!(results, [seed, solver.data.k, solver.data.status, solver.data.objective, solver.data.primal_inf, wall_time])
 	else
 		push!(results, [seed, solver.data.k, solver.data.status, solver.data.objective, solver.data.primal_inf])
 	end
@@ -146,11 +139,11 @@ for seed = 1:n_ocp
 end
 
 open("results/acrobot_contact.txt", "w") do io
-	@printf(io, " seed  iterations  status     objective           primal        wall (ms)   solver(ms)  \n")
+	@printf(io, " seed  iterations  status     objective           primal        wall (ms)   \n")
     for i = 1:n_ocp
         if benchmark
-            @printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f        %5.1f  \n", Int64(results[i][1]), Int64(results[i][2]), Int64(results[i][3]) == 0,
-                            results[i][4], results[i][5], results[i][6] * 1000, results[i][7] * 1000)
+            @printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f      \n", Int64(results[i][1]), Int64(results[i][2]), Int64(results[i][3]) == 0,
+                            results[i][4], results[i][5], results[i][6])
         else
             @printf(io, " %2s     %5s      %5s    %.8e    %.8e \n",  Int64(results[i][1]), Int64(results[i][2]), Int64(results[i][3]) == 0, results[i][4], results[i][5])
         end

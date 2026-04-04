@@ -5,16 +5,20 @@ using Plots
 using MeshCat
 using Printf
 using LaTeXStrings
+using StaticArrays
+using BenchmarkTools
 
 visualise = false
 benchmark = false
 verbose = true
-n_benchmark = 10
 
 T = Float64
 Δ = 0.04
 N = 101
 n_ocp = 100
+
+const nu::Int64 = 11
+const nx::Int64 = 4
 
 options = Options{T}(verbose=verbose, optimality_tolerance=1e-7)
 
@@ -27,7 +31,7 @@ function plotCircle!(xc, yc, r, color=:blue)
     plot!(circleShape(xc, yc, r), seriestype = [:shape], lw = 2.0,
             c = color, linecolor = :black,
             legend = false, fillalpha = 1.0, aspect_ratio = 1)
-end
+end 
 
 results = Vector{Vector{Any}}()
 params = Vector{Vector{T}}()
@@ -35,7 +39,7 @@ params = Vector{Vector{T}}()
 for seed = 1:n_ocp
 	Random.seed!(seed)
     
-    x1 = T[0.0, 0.0, 0.0, 0.0]
+    x1 = @SVector zeros(T, nx)
 
     block_params = [
         T[0.07; 0.12; 0.03711],
@@ -62,9 +66,6 @@ for seed = 1:n_ocp
     vel_lim = T(3.0)
     r_push = T(0.01)
     r_total = max(zx, zy) + r_push
-
-    nu = 11
-    nx = 4
 
     # ## Dynamics
 
@@ -95,14 +96,14 @@ for seed = 1:n_ocp
         return R(θ)[1:2, 1:2] * [-xl / 2 - r_push; -(xl / 2) * tan(ϕ)] + x[1:2]
     end
 
-    dyn = Dynamics(T, f, nx, nu)
+    dyn = Dynamics(f, nx, nu)
 
     # ## Objective
 
     l = (x, u) -> 1e-2 * dot(u[1:2], u[1:2]) + 2. * sum(u[7:8]) + 2. * sum(u[11])
     lN = (x, u) -> 20.0 * dot(x - xN, x - xN) + 2. * sum(u[7:8]) + 2. * sum(u[11])
-    stage_obj = Objective(T, l, nx, nu)
-	term_obj = Objective(T, lN, nx, nu)
+    stage_obj = Objective(l, nx, nu)
+	term_obj = Objective(lN, nx, nu)
 
     # ## Constraints
 
@@ -122,34 +123,27 @@ for seed = 1:n_ocp
         ]
     end
 
-    constraints = EqualityConstraints(T, c, nx, nu)
+    constraints = EqualityConstraints(c, nx, nu)
 
     # ## Control Limits
 
-    cl = ControlLimits(T[0.0, -force_lim, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.9, 0.0, 0.0],
-                T[force_lim, force_lim, vel_lim, vel_lim, Inf, Inf, Inf, Inf, 0.9, Inf, Inf])
+    cl = ControlLimits(SVector{nu, T}([0.0, -force_lim, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.9, 0.0, 0.0]),
+                SVector{nu, T}([force_lim, force_lim, vel_lim, vel_lim, Inf, Inf, Inf, Inf, 0.9, Inf, Inf]))
 
-    ocp = OCP(N, stage_obj, term_obj, dyn; constraints=constraints, control_limits=cl)
+    ocp = build_ocp(N, stage_obj, term_obj, dyn, constraints, cl)
     solver = Solver(ocp; options=options)
     solver.options.verbose = verbose
         
     # ## Initialise solver and solve
     
-    ū = [0.01 .* ones(T, nu) for k = 1:N]
+    ū = [SVector{nu, T}(0.01 .* ones(T, nu)) for k = 1:N]
     solve!(solver, x1, ū)
 
     if benchmark
 		solver.options.verbose = false
-		solver_time = 0.0
-		wall_time = 0.0
-		for i in 1:n_benchmark
-			solve!(solver, x1, ū)
-			solver_time += solver.data.solver_time
-			wall_time += solver.data.wall_time
-		end
-		solver_time /= n_benchmark
-		wall_time /= n_benchmark
-		push!(results, [seed, solver.data.k, solver.data.status, solver.data.objective, solver.data.primal_inf, wall_time, solver_time])
+		b = @benchmark solve!($solver, $x1, $ū)
+		wall_time = median(b.times) / 1e6
+		push!(results, [seed, solver.data.k, solver.data.status, solver.data.objective, solver.data.primal_inf, wall_time])
 	else
 		push!(results, [seed, solver.data.k, solver.data.status, solver.data.objective, solver.data.primal_inf])
 	end
@@ -210,11 +204,11 @@ for seed = 1:n_ocp
 end
 
 open("results/pushing_1_obs.txt", "w") do io
-	@printf(io, " seed  iterations  status     objective           primal        wall (ms)   solver(ms)  \n")
+	@printf(io, " seed  iterations  status     objective           primal        wall (ms)   \n")
     for i = 1:length(results)
         if benchmark
-            @printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f        %5.1f  \n", Int64(results[i][1]), Int64(results[i][2]), Int64(results[i][3]) == 0,
-                            results[i][4], results[i][5], results[i][6] * 1000, results[i][7] * 1000)
+            @printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f     \n", Int64(results[i][1]), Int64(results[i][2]), Int64(results[i][3]) == 0,
+                            results[i][4], results[i][5], results[i][6])
         else
             @printf(io, " %2s     %5s      %5s    %.8e    %.8e \n",  Int64(results[i][1]), Int64(results[i][2]), Int64(results[i][3]) == 0, results[i][4], results[i][5])
         end

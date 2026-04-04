@@ -4,17 +4,20 @@ using Plots
 using Random
 using Printf
 using StaticArrays
+using BenchmarkTools
 
 benchmark = false
 verbose = true
 visualise = false
-n_benchmark = 10
 
 T = Float64
 N = 101
 Δ = 0.05
 r_car = 0.02
 n_ocp = 100
+
+const nx::Int64 = 4
+const nu::Int64 = 10
 
 visualise && include("../visualise/concar.jl")
 
@@ -44,8 +47,6 @@ for seed = 1:n_ocp
 
     xyr_obs = [obs_1, obs_2, obs_3, obs_4]
     no = length(xyr_obs)
-    nx = 4
-    nu = 2 + 2 * no
 
     # ## Dynamics - RK2
 
@@ -59,7 +60,7 @@ for seed = 1:n_ocp
         return x + Δ * k2
     end
     f = (x, u) -> RK2(x, u, g)
-    dyn = Dynamics(T, f, nx, nu)
+    dyn = Dynamics(f, nx, nu)
 
     # ## objective
 
@@ -75,8 +76,8 @@ for seed = 1:n_ocp
         J = 200.0 * dot(x - xN, x - xN)
         J += 50.0 * sum(s)
     end
-    stage_obj = Objective(T, l, nx, nu)
-	term_obj = Objective(T, lN, nx, nu)
+    stage_obj = Objective(l, nx, nu)
+	term_obj = Objective(lN, nx, nu)
 
     # ## Constraints
 
@@ -93,7 +94,7 @@ for seed = 1:n_ocp
             for (i, obs) in enumerate(xyr_obs)];
     ]
     end
-    constraints = EqualityConstraints(T, c, nx, nu)
+    constraints = EqualityConstraints(c, nx, nu)
 
     # ## Control Limits
 
@@ -105,7 +106,7 @@ for seed = 1:n_ocp
 
     # ## Initialise solver and solve
     
-    ocp = OCP(N, stage_obj, term_obj, dyn; constraints=constraints, control_limits=cl)
+    ocp = build_ocp(N, stage_obj, term_obj, dyn, constraints, cl)
     solver = Solver(ocp; options=options)
     solver.options.verbose = verbose
 
@@ -129,16 +130,9 @@ for seed = 1:n_ocp
 
     if benchmark
         solver.options.verbose = false
-        solver_time = 0.0
-        wall_time = 0.0
-        for i in 1:n_benchmark
-            solve!(solver, x1, ū)
-            solver_time += solver.data.solver_time
-            wall_time += solver.data.wall_time
-        end
-        solver_time /= n_benchmark
-        wall_time /= n_benchmark
-        push!(results, [seed, solver.data.k, solver.data.status, solver.data.objective, solver.data.primal_inf, wall_time, solver_time])
+        b = @benchmark solve!($solver, $x1, $ū)
+        wall_time = median(b.times) / 1e6
+        push!(results, [seed, solver.data.k, solver.data.status, solver.data.objective, solver.data.primal_inf, wall_time])
     else
         push!(results, [seed, solver.data.k, solver.data.status, solver.data.objective, solver.data.primal_inf])
     end
@@ -148,11 +142,11 @@ for seed = 1:n_ocp
 end
 
 open("results/concar.txt", "w") do io
-	@printf(io, " seed  iterations  status     objective           primal        wall (ms)   solver(ms)  \n")
+	@printf(io, " seed  iterations  status     objective           primal        wall (ms)  \n")
     for i = 1:n_ocp
         if benchmark
-            @printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f        %5.1f  \n", Int64(results[i][1]), Int64(results[i][2]), Int64(results[i][3]) == 0,
-                            results[i][4], results[i][5], results[i][6] * 1000, results[i][7] * 1000)
+            @printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f     \n", Int64(results[i][1]), Int64(results[i][2]), Int64(results[i][3]) == 0,
+                            results[i][4], results[i][5], results[i][6])
         else
             @printf(io, " %2s     %5s      %5s    %.8e    %.8e \n",  Int64(results[i][1]), Int64(results[i][2]), Int64(results[i][3]) == 0, results[i][4], results[i][5])
         end

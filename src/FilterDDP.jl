@@ -6,7 +6,6 @@ using Printf
 using Crayons
 using FastLapackInterface
 using StaticArrays
-using Revise
 using RuntimeGeneratedFunctions
 RuntimeGeneratedFunctions.init(@__MODULE__)
 
