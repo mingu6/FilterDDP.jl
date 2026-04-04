@@ -1,5 +1,6 @@
-function backward_pass!(solver::Solver{T, nx, nu, nc}, ocp::OCP{T, nx, nu, nc}, traj::Vector{TrajectoryElement{T, nx, nu, nc}},
-            data::SolverData{T}, options::Options{T}; verbose::Bool=false) where {T, nx, nu, nc}
+function backward_pass!(solver::Solver{T, nx, nu, nc, nux, ncx}, ocp::OCP{T, nx, nu, nc},
+            traj::Vector{TrajectoryElement{T, nx, nu, nc}}, data::SolverData{T}, options::Options{T}; verbose::Bool=false
+            ) where {T, nx, nu, nc, nux, ncx}
     reg::T = 0.0
     μ = data.μ
     δ_c = 0.
@@ -32,12 +33,21 @@ function backward_pass!(solver::Solver{T, nx, nu, nc}, ocp::OCP{T, nx, nu, nc}, 
 
             # evaluate derivatives
 
-            objective = t == ocp.N ? ocp.term_objective : ocp.stage_objective
-            lx = objective.lx(x, u)
-            lu_ = objective.lu(x, u)
-            lxx = objective.lxx(x, u)
-            lux = objective.lux(x, u)
-            luu = objective.luu(x, u)
+            if t == ocp.N
+                lx = ocp.term_objective.lx(x, u)
+                lu_ = ocp.term_objective.lu(x, u)
+                lxx = ocp.term_objective.lxx(x, u)
+                lux = ocp.term_objective.lux(x, u)
+                luu = ocp.term_objective.luu(x, u)
+                data.objective += ocp.term_objective.l(x, u)[1]
+            else
+                lx = ocp.stage_objective.lx(x, u)
+                lu_ = ocp.stage_objective.lu(x, u)
+                lxx = ocp.stage_objective.lxx(x, u)
+                lux = ocp.stage_objective.lux(x, u)
+                luu = ocp.stage_objective.luu(x, u)
+                data.objective += ocp.stage_objective.l(x, u)[1]
+            end
             
             if nc > 0
                 c = constraints.c(x, u)
@@ -46,9 +56,8 @@ function backward_pass!(solver::Solver{T, nx, nu, nc}, ocp::OCP{T, nx, nu, nc}, 
                 cxx = constraints.cxx(x, u, ϕ)
                 cux = constraints.cux(x, u, ϕ)
                 cuu = constraints.cuu(x, u, ϕ)
-
+                
                 # evaluate constraint violation norms
-
                 data.primal_1_curr += norm(c, 1)
                 data.primal_inf = max(data.primal_inf, norm(c, Inf))
             end
@@ -64,7 +73,6 @@ function backward_pass!(solver::Solver{T, nx, nu, nc}, ocp::OCP{T, nx, nu, nc}, 
             ul = u - cl.l
             uu = cl.u - u
             data.barrier_lagrangian_curr -= μ* (dot(log.(ul), cl.maskl) + dot(log.(uu), cl.masku))
-            data.objective += objective.l(x, u)[1]
 
             # evaluate complementary slackness errors
             cs_l = ul .* zl
@@ -101,48 +109,29 @@ function backward_pass!(solver::Solver{T, nx, nu, nc}, ocp::OCP{T, nx, nu, nc}, 
             end
             
             # inertia correction / regularisation
-            Ĥ = Ĥ + diagm(reg * SVector{nu, T}(ones(T, nu)))
+            reg_diag = @SVector ones(T, nu)
+            reg_diag = reg_diag .* reg
+            Ĥ = Ĥ + diagm(reg_diag)
 
             # factorise KKT system using nullspace method
             if nc > 0
                 A = cu'
-                Q, R = qr([A SMatrix{nu, nu-nc, T}(zeros(T, nu, nu-nc))])
+                z = @SMatrix zeros(T, nu, nu-nc)
+                Q, R = qr([A z])
                 Y = Q[:, SVector{nc, Int64}(1:nc)]
                 Z = Q[:, SVector{nu-nc, Int64}(nc+1:nu)]
                 
-                AY = LowerTriangular(A' * Y)
+                AY = A' * Y
                 fk = lu(AY)
                 α_β_y = fk \ [-c -cx]
 
                 Ĥ = Symmetric(Ĥ)
                 M = Symmetric(Z' * Ĥ * Z)
                 ck = cholesky(M; check=false)
-                if ck.info != 0
-                    data.status = 1
-                else
-                    α_β_z = ck \ (Z' * ([-Qû -B] - Ĥ * Y * α_β_y))
-                    α_β = Y * α_β_y + Z * α_β_z
-                    α = α_β[:, 1]
-                    β = α_β[:, SVector{nx, Int64}(2:nx+1)]
-
-                    ψ_ω = ((Y' * ([-Qû -B] - Ĥ * α_β))' / fk)'
-                    ψ = ψ_ω[:, 1]
-                    ω = ψ_ω[:, SVector{nx, Int64}(2:nx+1)]
-                end
-
             else
                 ck = cholesky(Symmetric(Ĥ); check=false)
-                ck.info != 0
-                if ck.info != 0
-                    data.status = 1
-                else
-                    α_β = ck \ [-Qû -B]
-                    α = α_β[:, 1]
-                    β = α_β[:, SVector{nx, Int64}(2:nx+1)]
-                    ψ = @SVector zeros(T, nc)
-                    ω = @SMatrix zeros(T, nc, nx)
-                end
             end
+            ck.info != 0 && (data.status = 1)
             
             if data.status == 1
                 if iszero(reg) # initial setting of regularisation
@@ -153,14 +142,24 @@ function backward_pass!(solver::Solver{T, nx, nu, nc}, ocp::OCP{T, nx, nu, nc}, 
                 break
             end
 
-            # update parameters of update rule for ineq. dual variables, i.e., 
+            if nc > 0
+                α_β_z = ck \ (Z' * ([-Qû -B] - Ĥ * Y * α_β_y))
+                α_β = Y * α_β_y + Z * α_β_z
+                α = α_β[:, 1]
+                β = α_β[:, SVector{nx, Int64}(2:nx+1)]
 
-            # χ_L =  μ inv.(u - u^L) - z^L - Σ^L * α 
-            # ζ_L =  - Σ^L * β 
-            # χ_U =  μ inv.(u^U - u) - z^U + Σ^U .* α 
-            # ζ_U =  Σ^U .* β
+                ψ_ω = ((Y' * ([-Qû -B] - Ĥ * α_β))' / fk)'
+                ψ = ψ_ω[:, 1]
+                ω = ψ_ω[:, SVector{nx, Int64}(2:nx+1)]
+            else
+                α_β = ck \ [-Qû -B]
+                α = α_β[:, 1]
+                β = α_β[:, SVector{nx, Int64}(2:nx+1)]
+                ψ = @SVector zeros(T, nc)
+                ω = @SMatrix zeros(T, nc, nx)
+            end
 
-            # see update above for Q̂u[t] for first part of χ^L[t] χ^U[t]
+            # update parameters of update rule for ineq. dual variables
 
             ζl =  -β .* Σ_L
             χl = inv_ul .* μ - zl - Σ_L .* α
@@ -169,31 +168,25 @@ function backward_pass!(solver::Solver{T, nx, nu, nc}, ocp::OCP{T, nx, nu, nc}, 
             χu = inv_uu .* μ - zu + Σ_U .* α
 
             # update the update rule
-            solver.update[t] = UpdateRule{T, nx, nu, nc}(α, ψ, β, ω, χl, χu, ζl, ζu)
+            solver.update[t] = UpdateRule{T, nx, nu, nc, nux, ncx}(α, ψ, β, ω, χl, χu, ζl, ζu)
 
             # evaluate optimality dual error
             Lu = lu_ - zl + zu + fu' * λ
             if nc > 0
                 Lu = Lu + cu' * ϕ
             end
+
             data.dual_inf = max(data.dual_inf, norm(Lu, Inf))
             z_norm += sum(zl)
             z_norm += sum(zu)
             ϕ_norm += norm(ϕ, 1)
 
             # Update return V derivatives for next timestep Vxx = C + β' * B + ω' cx
-            V̂xx = C + β' * B 
-            if nc > 0
-                V̂xx = V̂xx  + ω' * cx
-            end
-
-            # Vx = Lx' + β' * Qû + ω' c + fx' Vx+
+            V̂xx = C + β' * B
             V̂x = lx + β' * Qû + fx' * V̂x
-
-            # λ = Lx' + fx' λ+
             λ = lx + fx' * λ
-
             if nc > 0
+                V̂xx = V̂xx + ω' * cx
                 V̂x = V̂x + cx' * ϕ + ω' * c
                 λ = λ + cx' * ϕ
             end

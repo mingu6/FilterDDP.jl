@@ -1,10 +1,11 @@
-function solve!(solver::Solver{T, nx, nu, nc}, x1::SVector{nx, T}, u::Vector{SVector{nu, T}}; kwargs...) where {T, nx, nu, nc}
+function solve!(solver::Solver{T, nx, nu, nc, nux, ncx, F1, F2, F3, F4, F5, F6, C1, C2, C3, C4, C5, C6, OS1, OS2, OS3, OS4, OS5, OS6, OT1, OT2, OT3, OT4, OT5, OT6},
+        x1::SVector{nx, T}, u::Vector{SVector{nu, T}}; kwargs...) where {T, nx, nu, nc, nux, ncx, F1, F2, F3, F4, F5, F6, C1, C2, C3, C4, C5, C6, OS1, OS2, OS3, OS4, OS5, OS6, OT1, OT2, OT3, OT4, OT5, OT6}
     initialize_trajectory!(solver, u, x1)
     status = solve!(solver; kwargs...)
     return status
 end
 
-function solve!(solver::Solver{T, nx, nu, nc}) where {T, nx, nu, nc}
+function solve!(solver::Solver{T, nx, nu, nc, nux, ncx,}) where {T, nx, nu, nc, nux, ncx,}
     (solver.options.verbose && solver.data.k==0) && solver_info()
 
 	ocp = solver.ocp

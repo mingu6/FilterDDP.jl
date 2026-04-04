@@ -1,5 +1,6 @@
-function forward_pass!(solver::Solver{T, nx, nu, nc}, ocp::OCP{T, nx, nu, nc}, data::SolverData{T},
-            options::Options{T}; verbose=false) where {T, nx, nu, nc}
+function forward_pass!(solver::Solver{T, nx, nu, nc, nux, ncx},
+            ocp::OCP{T, nx, nu, nc}, data::SolverData{T},
+            options::Options{T}; verbose=false) where {T, nx, nu, nc, nux, ncx}
     data.l = 0  # line search iteration counter
     data.status = 0
     data.step_size = T(1.0)
@@ -40,7 +41,8 @@ function forward_pass!(solver::Solver{T, nx, nu, nc}, ocp::OCP{T, nx, nu, nc}, d
     data.status != 0 && (verbose && (@warn "Line search failed to find a suitable iterate"))
 end
 
-function rollout!(solver::Solver{T, nx, nu, nc}, ocp::OCP{T, nx, nu, nc}, data::SolverData{T}, τ::T, step_size::T) where {T, nx, nu, nc}
+function rollout!(solver::Solver{T, nx, nu, nc, nux, ncx}, ocp::OCP{T, nx, nu, nc},
+            data::SolverData{T}, τ::T, step_size::T) where {T, nx, nu, nc, nux, ncx}
     μ = data.μ
     cl = ocp.control_limits
 
@@ -49,17 +51,33 @@ function rollout!(solver::Solver{T, nx, nu, nc}, ocp::OCP{T, nx, nu, nc}, data::
     data.barrier_lagrangian_next = T(0.0)
 
     x = solver.nominal[1].x
-    for t in 1:ocp.N
-        δx = x - solver.nominal[t].x
+    for t = 1:ocp.N
+
+        x̄ = solver.nominal[t].x
+        ū = solver.nominal[t].u
+        ϕ̄  = solver.nominal[t].ϕ
+        α = solver.update[t].α
+        ψ = solver.update[t].ψ
+        β = solver.update[t].β
+        ω = solver.update[t].ω
+        zl̄ = solver.nominal[t].zl
+        zū = solver.nominal[t].zu
+        χl = solver.update[t].χl
+        χu = solver.update[t].χu
+        ζl = solver.update[t].ζl
+        ζu = solver.update[t].ζu
+
+        δx = x - x̄
 
         # u[t] .= ū[t] + β[t] * (x[t] - x̄[t]) + step_size * α[t]
-        u = solver.nominal[t].u + step_size .* solver.update[t].α + solver.update[t].β * δx
+        u = ū + step_size .* α + β * δx
 
         # ϕ[t] .= ϕ̄[t] + ω[t] * (x[t] - x̄[t]) + step_size * ψ[t]
-        ϕ = solver.nominal[t].ϕ + step_size .* solver.update[t].ψ + solver.update[t].ω * δx
+        ϕ = ϕ̄  + step_size .* ψ + ω * δx
 
-        zl = solver.nominal[t].zl + step_size .* solver.update[t].χl + solver.update[t].ζl * δx
-        zu = solver.nominal[t].zu + step_size .* solver.update[t].χu + solver.update[t].ζu * δx
+        zl = zl̄ + step_size .* χl + ζl * δx
+
+        zu = zū + step_size .* χu + ζu * δx
         
         # update current trajectory
         solver.current[t] = TrajectoryElement{T, nx, nu, nc}(x, u, ϕ, zl, zu)
@@ -74,8 +92,8 @@ function rollout!(solver::Solver{T, nx, nu, nc}, ocp::OCP{T, nx, nu, nc}, data::
         # check frac-to-boundary condition
         ul = u - cl.l
         uu = cl.u - u
-        ul̄ = solver.nominal[t].u - cl.l
-        uū = cl.u - solver.nominal[t].u
+        ul̄ = ū - cl.l
+        uū = cl.u - ū
 
         if any((ul̄ .* (1. - τ) .> ul) .* cl.maskl)
             data.status = 2
@@ -85,19 +103,25 @@ function rollout!(solver::Solver{T, nx, nu, nc}, ocp::OCP{T, nx, nu, nc}, data::
             data.status = 2
             return
         end
-        if any(solver.nominal[t].zl .* (1. - τ) .> zl)
+        if any(zl̄ .* (1. - τ) .> zl)
             data.status = 2
             return
         end
-        if any(solver.nominal[t].zu .* (1. - τ) .> zu)
+        if any(zū .* (1. - τ) .> zu)
             data.status = 2
             return
         end
 
         # evaluate barrier lagrangian
-        objective = t == ocp.N ? ocp.term_objective : ocp.stage_objective        
-        data.barrier_lagrangian_next -= μ* (dot(log.(ul), cl.maskl) + dot(log.(uu), cl.masku))
-        data.barrier_lagrangian_next += objective.l(x, u)[1]
+        dl = dot(log.(ul), cl.maskl)
+        du = dot(log.(uu), cl.masku)
+        data.barrier_lagrangian_next -= dl * μ
+        data.barrier_lagrangian_next -= du * μ
+        if t == ocp.N
+            data.barrier_lagrangian_next += ocp.term_objective.l(x, u)[1]
+        else
+            data.barrier_lagrangian_next += ocp.stage_objective.l(x, u)[1]
+        end
 
         if t < ocp.N
             x = solver.ocp.dynamics.f(x, u)

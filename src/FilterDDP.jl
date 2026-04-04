@@ -27,7 +27,7 @@ export Objective
 export EqualityConstraints
 export Dynamics
 export ControlLimits
-export OCP
+export build_ocp
 export Solver,
     Options,
     solve!,
