@@ -36,9 +36,9 @@ FilterDDP.jl also provides an efficient Julia implmentation of both the unconstr
 
 # Benchmarks
 
-FilterDDP can be extremely fast for OCPs compared to general purpose solvers like IPOPT. For example, FilterDDP can **solve a non-prehensile pushing task with nonlinear dynamics and constraints more than 10$\times$ faster than IPOPT through JuMP.jl with superior robustness**. The left figure shows wall clock times in milliseconds and the right figure shows number of OCPs (y-axis) solved to an optimality error of $10^{-7}$ by a given iteraiton count (x-axis). IPOPT (B) is a quasi-Newton variant of IPOPT while IPOPT represents the full algorithm with exact Hessians.
+FilterDDP can be extremely fast for OCPs compared to general purpose solvers like IPOPT. For example, FilterDDP can **solve a non-prehensile pushing task with nonlinear dynamics and constraints more than 10x faster than IPOPT through JuMP.jl with superior robustness**. The left figure shows wall clock times in milliseconds and the right figure shows number of OCPs (y-axis) solved to an optimality error of $10^{-7}$ by a given iteraiton count (x-axis). IPOPT (B) is a quasi-Newton variant of IPOPT while IPOPT represents the full algorithm with exact Hessians.
 
-![Manipulation Time](manip_time.png "Manipulation Wall"){width=300} ![Manipulation Robust](manip_succ.png "Manipulation Robustness"){width=300}
+<img src=manip_time.png width=300> <img src=manip_succ.png width=300>
 
 The benchmark was run on a Lenovo ThinkPad T14s Gen 5 with an Intel® Core™ Ultra 7 155U, 32GB running Ubuntu 24.04.3 LTS and Julia version 1.13.0-beta3 compiled using `-O3` optimisation level.
 
