@@ -6,10 +6,10 @@ using Suppressor
 using Printf
 using BenchmarkTools
 
+visualise = false
 output = false
 benchmark = false
 bfgs = false
-visualise = false
 
 print_level = output ? 5 : 4
 

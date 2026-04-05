@@ -6,15 +6,15 @@ using Printf
 using StaticArrays
 using BenchmarkTools
 
-benchmark = true
-verbose = true
 visualise = false
+benchmark = false
+verbose = true
 
 T = Float64
 N = 101
 Δ = 0.05
 r_car = 0.02
-n_ocp = 5
+n_ocp = 100
 
 const nx::Int64 = 4
 const nu::Int64 = 10

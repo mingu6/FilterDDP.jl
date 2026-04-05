@@ -2,7 +2,6 @@ using FilterDDP
 using LinearAlgebra
 using Random
 using Plots
-using MeshCat
 using Printf
 using LaTeXStrings
 using StaticArrays

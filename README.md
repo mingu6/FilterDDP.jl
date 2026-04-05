@@ -4,7 +4,7 @@ This repository contains a Julia package for solving constrained optimal control
 
 FilterDDP is a Differential Dynamic Programming (DDP) algorithm for solving a general class of optimal control problems with nonlinear equality constraints in addition to the discrete-time dynamics. A line-search filter approach is taken to handle these equality constraints. 
 
-Furthermore, an interior point extension analogous to [Pavlov et al. (2021)](https://ieeexplore.ieee.org/document/9332234) is applied for handling inequality constraints. The local quadratic convergence of FilterDDP is formally established in the research paper. The global convergence proof is coming soon! 
+Furthermore, an interior point extension analogous to [Pavlov et al. (2021)](https://ieeexplore.ieee.org/document/9332234) is applied for handling inequality constraints. The local quadratic convergence of FilterDDP is formally established in the research paper. The global convergence proof is coming soon! Note that FilterDDP requires exact Hessians and does not perform well under a quasi-Newton approximation.
 
 FilterDDP can solve OCPs of the form
 ```math
@@ -26,11 +26,21 @@ where $\mathbf{x} = (x_1, \dots, x_{N})$ is the state trajectory and $\mathbf{u}
 
 ## Nonlinear Inequality Constraints
 
-FilterDDP is able to handle nonlinear inequality constraints for the form $b_L \leq g^t(x_t, \tilde{u}_t) \leq b_U$ through the inclusion of slack variables, i.e., let $u_t = (\tilde{u}_t^\top, s_t)^\top$ and replace the aforementioned nonlinear inequality constraints with equality constraints $g^t(x_t, \tilde{u}_t) - s_t = 0$ and control limits $b^L_t \leq s_t \leq b^U_t$.
+FilterDDP is able to handle nonlinear inequality constraints for the form $b_L \leq g(x_t, \tilde{u}_t) \leq b_U$ through the inclusion of slack variables, i.e., let $u_t = (\tilde{u}_t^\top, s_t)^\top$ and replace the aforementioned nonlinear inequality constraints with equality constraints $g(x_t, \tilde{u}_t) - s_t = 0$ and control limits $b^L \leq s_t \leq b^U$.
 
 ## Unconstrained (and Bound Constrained) Differential Dynamic Programming
 
 FilterDDP.jl also provides an efficient Julia implmentation of both the unconstrained DDP algorithm by Mayne et al. (1970) and the Interior Point DDP (IPDDP) algorithm by [Pavlov et al. (2021)](https://ieeexplore.ieee.org/document/9332234) specialised to control limits only. The unconstrained DDP algorithm is applied when neither equality nor inequality constraints are added and IPDDP is applied when only control limits are added. In both cases, the dynamics dual variable as defined by (8) and (13) in the FilterDDP paper are replaced with the value function gradient $\bar{V}_x^t$ due to improved numerical performance overall.
+
+---
+
+# Benchmarks
+
+FilterDDP can be extremely fast for OCPs compared to general purpose solvers like IPOPT. For example, FilterDDP can **solve a non-prehensile pushing task with nonlinear dynamics and constraints more than 10$\times$ faster than IPOPT through JuMP.jl with superior robustness**. The left figure shows wall clock times in milliseconds and the right figure shows number of OCPs (y-axis) solved to an optimality error of $10^{-7}$ by a given iteraiton count (x-axis). IPOPT (B) is a quasi-Newton variant of IPOPT while IPOPT represents the full algorithm with exact Hessians.
+
+![Manipulation Time](manip_time.png "Manipulation Wall"){width=300} ![Manipulation Robust](manip_succ.png "Manipulation Robustness"){width=300}
+
+The benchmark was run on a Lenovo ThinkPad T14s Gen 5 with an Intel® Core™ Ultra 7 155U, 32GB running Ubuntu 24.04.3 LTS and Julia version 1.13.0-beta3 compiled using `-O3` optimisation level.
 
 ---
 

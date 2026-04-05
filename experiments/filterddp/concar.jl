@@ -6,9 +6,9 @@ using Printf
 using StaticArrays
 using BenchmarkTools
 
+visualise = false
 benchmark = false
 verbose = true
-visualise = false
 
 T = Float64
 N = 101
