@@ -6,6 +6,8 @@ FilterDDP is a Differential Dynamic Programming (DDP) algorithm for solving a ge
 
 Furthermore, an interior point extension analogous to [Pavlov et al. (2021)](https://ieeexplore.ieee.org/document/9332234) is applied for handling inequality constraints. The local quadratic convergence of FilterDDP is formally established in the research paper. The global convergence proof is coming soon! Note that FilterDDP requires exact Hessians and does not perform well under a quasi-Newton approximation.
 
+## Global convergence proof now (3 June 2026) available [http://arxiv.org/abs/2606.01487][http://arxiv.org/abs/2606.01487]
+
 FilterDDP can solve OCPs of the form
 ```math
 \begin{array}{rl}
