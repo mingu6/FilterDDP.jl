@@ -35,6 +35,68 @@ end
 results = Vector{Vector{Any}}()
 params = Vector{Vector{T}}()
 
+const npd::Int64 = 2
+const npe::Int64 = 1
+const npi::Int64 = 4
+xN = T[0.3, 0.4, 1.5 * π, 0.0]
+force_lim = T(0.3)
+vel_lim = T(3.0)
+r_push = T(0.01)
+
+function rotation_matrix(θ)
+    return [[cos(θ); sin(θ); 0] [-sin(θ); cos(θ); 0] [0.0; 0.0; 1.0]]
+end
+
+function contact_jacobian(ϕ, p)
+    return [[1.0; 0.0] [0.0; 1.0] [p[1] / 2 * tan(ϕ); -p[1] / 2]]
+end
+
+function pushing_dynamics(x, u, p)
+    θ = x[3]
+    ϕ = x[4]
+    limit_surface = [one(p[2]); one(p[2]); p[2]^(-2)]
+    velocity = rotation_matrix(θ) *
+        (limit_surface .* (transpose(contact_jacobian(ϕ, p)) * u[1:2]))
+    return x + Δ .* [velocity; u[3] - u[4]]
+end
+
+complementarity = (x, u) -> [u[5] * u[3]; u[6] * u[4]]
+stage_cost = (x, u) ->
+    1e-2 * dot(u[1:2], u[1:2]) + 2.0 * sum(complementarity(x, u)) + 2.0 * u[8]
+terminal_cost = (x, u) ->
+    20.0 * dot(x - xN, x - xN) + 2.0 * sum(complementarity(x, u)) + 2.0 * u[8]
+
+function contact_equalities(x, u, p)
+    return [
+        p[1] * u[1] - u[2] - u[5];
+        p[1] * u[1] + u[2] - u[6];
+        x[4] - u[7]
+    ]
+end
+
+function pushing_inequalities(x, u, p)
+    xdiff = x[1:2] - p[1:2]
+    obstacle_constraint = (p[3] + p[4])^2 - dot(xdiff, xdiff) - u[8]
+    return [complementarity(x, u); obstacle_constraint]
+end
+
+dynamics = Dynamics(pushing_dynamics, nx, nu, npd)
+stage_objective = Objective(stage_cost, nx, nu)
+terminal_objective = Objective(terminal_cost, nx, nu)
+equalities = EqualityConstraints(contact_equalities, nx, nu, npe)
+inequalities = InequalityConstraints(pushing_inequalities, nx, nu,
+    SVector{3, T}([0.0, 0.0, -Inf]), SVector{3, T}([Inf, Inf, 0.0]), npi)
+control_limits = ControlLimits(
+    SVector{nu, T}([0.0, -force_lim, 0.0, 0.0, 0.0, 0.0, -0.9, 0.0]),
+    SVector{nu, T}([force_lim, force_lim, vel_lim, vel_lim, Inf, Inf, 0.9, Inf]))
+
+function xy_pusher(x, p)
+    θ = x[3]
+    ϕ = x[4]
+    return rotation_matrix(θ)[1:2, 1:2] *
+        [-p[1] / 2 - r_push; -(p[1] / 2) * tan(ϕ)] + x[1:2]
+end
+
 for seed = 1:n_ocp
 	Random.seed!(seed)
     
@@ -59,82 +121,21 @@ for seed = 1:n_ocp
     zy = xyc[2]
     c = xyc[3]  # ellipsoidal approximation ratio
 
-    xN = T[0.3, 0.4, 1.5 * pi, 0.0]
     μ_fric = T(0.2) + T(0.1) * (rand(T) - T(0.5)) # friction coefficient b/w pusher and slider
-    force_lim = T(0.3)
-    vel_lim = T(3.0)
-    r_push = T(0.01)
     r_total = max(zx, zy) + r_push
+    dynamics_parameters = @SVector [zx, c]
+    equality_parameters = @SVector [μ_fric]
+    inequality_parameters = @SVector [obstacle[1], obstacle[2], obstacle[3], r_total]
+    empty_parameters = SVector{0, T}()
+    ocp_parameters = OCPParameters(
+        stage_objective=empty_parameters,
+        term_objective=empty_parameters,
+        dynamics=dynamics_parameters,
+        equality_constraints=equality_parameters,
+        inequality_constraints=inequality_parameters)
 
-    # ## Dynamics
-
-    function R(θ)
-        return [[cos(θ); sin(θ); 0] [-sin(θ); cos(θ); 0] [0.0; 0.0; 1.0]]
-    end
-
-    L = [T(1.0); T(1.0); c^(-2)]
-
-    function Jc(ϕ)
-        return [[1.0; 0.0] [0.0; 1.0] [zx / 2 * tan(ϕ); -zx / 2]]
-    end
-
-    function fc(x, u)
-        θ = x[3]
-        ϕ = x[4]
-        return [R(θ) * (L .* (transpose(Jc(ϕ)) * u[1:2])); u[3] - u[4]]
-    end
-
-    function f(x, u)
-        return x + Δ .* fc(x, u)
-    end
-
-    function xy_pusher(x)
-        xl = xyc[1]
-        θ = x[3]
-        ϕ = x[4]
-        return R(θ)[1:2, 1:2] * [-xl / 2 - r_push; -(xl / 2) * tan(ϕ)] + x[1:2]
-    end
-
-    dyn = Dynamics(f, nx, nu)
-
-    # ## Objective
-
-    complementarity = (x, u) -> [u[5] * u[3]; u[6] * u[4]]
-    l = (x, u) -> 1e-2 * dot(u[1:2], u[1:2]) +
-        2. * sum(complementarity(x, u)) + 2. * u[8]
-    lN = (x, u) -> 20.0 * dot(x - xN, x - xN) +
-        2. * sum(complementarity(x, u)) + 2. * u[8]
-    stage_obj = Objective(l, nx, nu)
-	term_obj = Objective(lN, nx, nu)
-
-    # ## Constraints
-
-    function obs_constr(x, u)
-        xdiff = x[1:2] - obstacle[1:2]
-        return (obstacle[3] + r_total)^2 - xdiff' * xdiff - u[8]
-    end
-
-    function h(x, u)
-        [
-        μ_fric * u[1] - u[2] - u[5];
-        μ_fric * u[1] + u[2] - u[6];
-        x[4] - u[7]  # bound constraint on ϕ_t
-        ]
-    end
-
-    g = (x, u) -> [complementarity(x, u); obs_constr(x, u)]
-    equalities = EqualityConstraints(h, nx, nu)
-    inequalities = InequalityConstraints(g, nx, nu,
-        SVector{3, T}([0.0, 0.0, -Inf]), SVector{3, T}([Inf, Inf, 0.0]))
-
-    # ## Control Limits
-
-    control_limits = ControlLimits(
-        SVector{nu, T}([0.0, -force_lim, 0.0, 0.0, 0.0, 0.0, -0.9, 0.0]),
-        SVector{nu, T}([force_lim, force_lim, vel_lim, vel_lim, Inf, Inf, 0.9, Inf]))
-
-    ocp = build_ocp(N, stage_obj, term_obj, dyn,
-        equalities, inequalities, control_limits)
+    ocp = build_ocp(N, stage_objective, terminal_objective, dynamics,
+        equalities, inequalities, control_limits; parameters=ocp_parameters)
     solver = Solver(ocp; options=options)
     solver.options.verbose = verbose
         
@@ -180,7 +181,7 @@ for seed = 1:n_ocp
         xs = map(x -> x[1], x_sol[1:end-1])  # slider position
         ys = map(x -> x[2], x_sol[1:end-1])
         ps = map(x -> x[3], x_sol[1:end-1])
-        xyp = map(xy_pusher, x_sol[1:end-1])
+        xyp = map(x -> xy_pusher(x, dynamics_parameters), x_sol[1:end-1])
         xp = map(x -> x[1], xyp)
         yp = map(x -> x[2], xyp)
         plot(xs, ys, linecolor=:brown4, linestyle=:dash, linewidth=2, fontfamily="Computer Modern",
@@ -195,7 +196,7 @@ for seed = 1:n_ocp
                 [zx / 2,  zy / 2],
                 [-zx / 2,  zy / 2]
                 ]
-            rot = R(ps[ind])
+            rot = rotation_matrix(ps[ind])
             vertices_rot = [rot[1:2, 1:2] * v + [xs[ind]; ys[ind]] for v in vertices]
             push_vert_x = map(v -> v[1], vertices_rot)
             push_vert_y = map(v -> v[2], vertices_rot)

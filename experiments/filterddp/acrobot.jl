@@ -28,12 +28,36 @@ options = Options{T}(verbose=verbose, optimality_tolerance=1e-7)
 results = Vector{Vector{Any}}()
 params = Vector{Vector{T}}()
 
+const npd::Int64 = 11
+xN = T[π; 0.0; 0.0; 0.0]
+Q = diagm(T[1.0, 1.0, 0.1, 0.1])
+
+function double_pendulum(p)
+	return DoublePendulum{eltype(p)}(2, 1, 2,
+		p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8],
+		p[9], p[10], p[11])
+end
+
+acrobot_dynamics = (x, u, p) ->
+	x + Δ .* acrobot_explicit(double_pendulum(p), x, u)
+stage_cost = (x, u) ->
+	Δ * (2.0 * dot(u, u) + dot(x - xN, Q * (x - xN)))
+terminal_cost = (x, u) ->
+	1000.0 * dot(x - xN, Q * (x - xN)) + 2.0 * dot(u, u)
+
+dynamics = Dynamics(acrobot_dynamics, nx, nu, npd)
+stage_objective = Objective(stage_cost, nx, nu)
+terminal_objective = Objective(terminal_cost, nx, nu)
+equalities = EqualityConstraints(nx, nu)
+
+lim = use_control_limits ? T(8.0) : T(Inf)
+control_limits = ControlLimits(
+	SVector{nu, T}([-lim]), SVector{nu, T}([lim]))
+
 for seed = 1:n_ocp
 	Random.seed!(seed)
-	
-	xN = T[π; 0.0; 0.0; 0.0]
 
-	acrobot = DoublePendulum{T}(2, 1, 2,
+	dynamics_parameters = @SVector [
 		T(0.9) + 0.2 * rand(T),
 		T(0.333), 
 		T(0.9) + 0.2 * rand(T),
@@ -42,31 +66,18 @@ for seed = 1:n_ocp
 		T(0.333), 
 		T(0.9) + 0.2 * rand(T),
 		T(0.5),
-		9.81, 0.0, 0.0)
+		T(9.81), T(0.0), T(0.0)]
+	acrobot = double_pendulum(dynamics_parameters)
+	empty_parameters = SVector{0, T}()
+	ocp_parameters = OCPParameters(
+		stage_objective=empty_parameters,
+		term_objective=empty_parameters,
+		dynamics=dynamics_parameters,
+		equality_constraints=empty_parameters,
+		inequality_constraints=empty_parameters)
 
-	# ## Dynamics (explicit Euler)
-    function f(x, u)
-        return x + Δ .* acrobot_explicit(acrobot, x, u)
-    end
-	dyn = Dynamics(f, nx, nu)
-
-	# ## Objective
-
-    Q = diagm(T[1., 1., 0.1, 0.1])
-	l = (x, u) -> Δ * (2. * u' * u + (x - xN)' * Q * (x - xN))
-    lN = (x, u) -> 1000.0 * (x - xN)' * Q * (x - xN) + 2. * u' * u
-
-	stage_obj = Objective(l, nx, nu)
-	term_obj = Objective(lN, nx, nu)
-
-	equalities = EqualityConstraints(nx, nu)
-
-	# ## Control Limits
-	lim = use_control_limits ? T(8.0) : T(Inf)
-	control_limits = ControlLimits(
-		SVector{nu, T}(T[-lim]), SVector{nu, T}(T[lim]))
-
-	ocp = build_ocp(N, stage_obj, term_obj, dyn, equalities, control_limits)
+	ocp = build_ocp(N, stage_objective, terminal_objective, dynamics,
+		equalities, control_limits; parameters=ocp_parameters)
 	solver = Solver(ocp; options=options)
 	solver.options.verbose = verbose
 

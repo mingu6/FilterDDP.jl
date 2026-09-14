@@ -26,10 +26,47 @@ options = Options{T}(verbose=verbose, optimality_tolerance=1e-7)
 results = Vector{Vector{Any}}()
 params = Vector{Vector{T}}()
 
+xN = T[1.0; 1.0; π / 4; 0.0]
+no = 4
+const npi::Int64 = 12
+
+function continuous_dynamics(x, u)
+    return [x[4] * cos(x[3]); x[4] * sin(x[3]); u[2]; u[1]]
+end
+
+function midpoint_dynamics(x, u)
+    k1 = continuous_dynamics(x, u)
+    k2 = continuous_dynamics(x + Δ * 0.5 * k1, u)
+    return x + Δ * k2
+end
+
+stage_cost = (x, u) -> begin
+    slack = u[2 .+ (1:no)]
+    Δ * dot(u[1:2] .* [5.0, 1.0], u[1:2]) + 1000.0 * dot(slack, slack)
+end
+terminal_cost = (x, u) -> begin
+    slack = u[2 .+ (1:no)]
+    200.0 * dot(x - xN, x - xN) + 1000.0 * dot(slack, slack)
+end
+
+function obstacle_constraints(x, u, p)
+    return [
+        (p[3 * obstacle] + r_car)^2 -
+            (x[1] - p[3 * obstacle - 2])^2 -
+            (x[2] - p[3 * obstacle - 1])^2 - u[2 + obstacle]
+        for obstacle = 1:no
+    ]
+end
+
+dynamics = Dynamics(midpoint_dynamics, nx, nu)
+stage_objective = Objective(stage_cost, nx, nu)
+terminal_objective = Objective(terminal_cost, nx, nu)
+equalities = EqualityConstraints(nx, nu)
+inequalities = InequalityConstraints(obstacle_constraints, nx, nu,
+    SVector{no, T}(-Inf * ones(T, no)), SVector{no, T}(zeros(T, no)), npi)
+
 for seed = 1:n_ocp
     Random.seed!(seed)
-    
-    xN = T[1.0; 1.0; π / 4; 0.0]
 
     # ## control limits
     F_lim = T(1.5) + rand(T)
@@ -46,55 +83,14 @@ for seed = 1:n_ocp
     obs_4 = T[0.75, 0.25, 0.05] + T[(rand(T) - T(0.5)) * 0.2, (rand(T) - T(0.5)) * 0.2, rand(T) * 0.15]
 
     xyr_obs = [obs_1, obs_2, obs_3, obs_4]
-    no = length(xyr_obs)
-
-    # ## Dynamics - RK2
-
-    # continuous time dynamics
-    function g(x, u)
-        [x[4] * cos(x[3]); x[4] * sin(x[3]); u[2]; u[1]]
-    end
-    function RK2(x, u, g)
-        k1 = g(x, u)
-        k2 = g(x + Δ * 0.5 * k1, u)
-        return x + Δ * k2
-    end
-    f = (x, u) -> RK2(x, u, g)
-    dyn = Dynamics(f, nx, nu)
-
-    # ## objective
-
-    l = (x, u) -> begin
-        s = u[2 .+ (1:no)]    
-        J = 0.0
-        J += Δ * dot(u[1:2] .* [5.0, 1.0], u[1:2])
-        J += 1000.0 * s' * s
-        return J
-    end
-    lN = (x, u) -> begin
-        s = u[2 .+ (1:no)]
-        J = 200.0 * dot(x - xN, x - xN) + 1000.0 * s' * s
-    end
-    stage_obj = Objective(l, nx, nu)
-	term_obj = Objective(lN, nx, nu)
-
-    # ## Constraints
-
-    obs_dist(obs_xy) = (x, u) -> begin
-        x2d = x[1:2]
-        xy_diff = x2d - obs_xy
-        return dot(xy_diff, xy_diff)
-    end
-    g = (x, u) -> begin
-    [
-        # Penalized violation u[2+i] softens obstacle avoidance.
-        [(obs[3] + r_car)^2 - obs_dist(obs[1:2])(x, u) - u[2+i]
-            for (i, obs) in enumerate(xyr_obs)];
-    ]
-    end
-    equalities = EqualityConstraints(nx, nu)
-    inequalities = InequalityConstraints(g, nx, nu,
-        SVector{no, T}(-Inf * ones(T, no)), SVector{no, T}(zeros(T, no)))
+    inequality_parameters = SVector{npi, T}(vcat(xyr_obs...))
+    empty_parameters = SVector{0, T}()
+    ocp_parameters = OCPParameters(
+        stage_objective=empty_parameters,
+        term_objective=empty_parameters,
+        dynamics=empty_parameters,
+        equality_constraints=empty_parameters,
+        inequality_constraints=inequality_parameters)
 
     # ## Control Limits
 
@@ -106,8 +102,8 @@ for seed = 1:n_ocp
 
     # ## Initialise solver and solve
     
-    ocp = build_ocp(N, stage_obj, term_obj, dyn,
-        equalities, inequalities, control_limits)
+    ocp = build_ocp(N, stage_objective, terminal_objective, dynamics,
+        equalities, inequalities, control_limits; parameters=ocp_parameters)
     solver = Solver(ocp; options=options)
     solver.options.verbose = verbose
 

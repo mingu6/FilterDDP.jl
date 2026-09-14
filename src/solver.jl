@@ -135,11 +135,13 @@ function initialize_trajectory!(solver::Solver{T, nx, nu, nh, ng},
     control_limits = solver.ocp.control_limits
     inequalities = solver.ocp.inequality_constraints
     slack_bounds = inequalities.bounds
+    parameters = solver.ocp.parameters
     x = x1
     for t = 1:solver.ocp.N
         ūt = initialize_interior(
             u[t], control_limits, options.κ_1, options.κ_2)
-        s̄t = ng > 0 ? inequalities.g(x, ūt) : @SVector zeros(T, ng)
+        s̄t = ng > 0 ? evaluate(
+            inequalities.g, x, ūt, parameters.inequality_constraints) : @SVector zeros(T, ng)
         s = initialize_interior(
             s̄t, slack_bounds, options.κ_1, options.κ_2)
         ϕ = @SVector zeros(T, nh)
@@ -152,7 +154,7 @@ function initialize_trajectory!(solver::Solver{T, nx, nu, nh, ng},
         solver.nominal[t] = TrajectoryElement(x, ūt, s, ϕ, ν, zl, zu, zsl, zsu)
         
         if t < solver.ocp.N
-            x = solver.ocp.dynamics.f(x, ūt)
+            x = evaluate(solver.ocp.dynamics.f, x, ūt, parameters.dynamics)
         end
     end
     compute_nlp_scaling!(solver)
@@ -176,6 +178,7 @@ function compute_nlp_scaling!(solver::Solver{T, nx, nu, nh, ng}) where {T, nx, n
     scaling = solver.scaling
     options = solver.options
     max_gradient = options.nlp_scaling_max_gradient
+    parameters = solver.ocp.parameters
     max_gradient > zero(T) || throw(ArgumentError("nlp_scaling_max_gradient must be positive"))
 
     scaling.objective = one(T)
@@ -187,14 +190,18 @@ function compute_nlp_scaling!(solver::Solver{T, nx, nu, nh, ng}) where {T, nx, n
     for t = 1:solver.ocp.N
         element = solver.nominal[t]
         objective = t == solver.ocp.N ? solver.ocp.term_objective : solver.ocp.stage_objective
+        objective_parameters = t == solver.ocp.N ?
+            parameters.term_objective : parameters.stage_objective
         objective_gradient_norm = max(
             objective_gradient_norm,
-            norm(objective.lx(element.x, element.u), Inf),
-            norm(objective.lu(element.x, element.u), Inf))
+            norm(evaluate(objective.lx, element.x, element.u, objective_parameters), Inf),
+            norm(evaluate(objective.lu, element.x, element.u, objective_parameters), Inf))
 
         if nh > 0
-            hx = solver.ocp.equality_constraints.hx(element.x, element.u)
-            hu = solver.ocp.equality_constraints.hu(element.x, element.u)
+            hx = evaluate(solver.ocp.equality_constraints.hx,
+                element.x, element.u, parameters.equality_constraints)
+            hu = evaluate(solver.ocp.equality_constraints.hu,
+                element.x, element.u, parameters.equality_constraints)
             scaling.equality[t] = SVector{nh, T}(ntuple(Val(nh)) do index
                 gradient_norm = max(norm(hx[index, :], Inf), norm(hu[index, :], Inf))
                 gradient_scale(max_gradient, gradient_norm)
@@ -202,8 +209,10 @@ function compute_nlp_scaling!(solver::Solver{T, nx, nu, nh, ng}) where {T, nx, n
         end
 
         if ng > 0
-            gx = solver.ocp.inequality_constraints.gx(element.x, element.u)
-            gu = solver.ocp.inequality_constraints.gu(element.x, element.u)
+            gx = evaluate(solver.ocp.inequality_constraints.gx,
+                element.x, element.u, parameters.inequality_constraints)
+            gu = evaluate(solver.ocp.inequality_constraints.gu,
+                element.x, element.u, parameters.inequality_constraints)
             scaling.inequality[t] = SVector{ng, T}(ntuple(Val(ng)) do index
                 gradient_norm = max(one(T), norm(gx[index, :], Inf), norm(gu[index, :], Inf))
                 gradient_scale(max_gradient, gradient_norm)

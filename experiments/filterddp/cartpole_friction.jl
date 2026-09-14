@@ -27,108 +27,111 @@ options = Options{T}(verbose=verbose, optimality_tolerance=1e-7)
 results = Vector{Vector{Any}}()
 params = Vector{Vector{T}}()
 
+const npe::Int64 = 6
+const nq::Int64 = 2
+const nF::Int64 = 1
+qN = T[0.0; π]
+
+function cartpole_model(p)
+    return Cartpole{eltype(p)}(2, 1, 2,
+        p[1], p[2], p[3], p[4], [p[5], p[6]])
+end
+
+state_dynamics = (x, u) -> [x[nq .+ (1:nq)]; u[nF .+ (1:nq)]]
+
+function stage_cost(x, u)
+    F = u[1]
+    β1 = u[(nF + nq) .+ (1:2)]
+    β2 = u[(nF + nq + 2) .+ (1:2)]
+    η1 = u[(nF + nq + 4) .+ (1:2)]
+    η2 = u[(nF + nq + 6) .+ (1:2)]
+    ψ = u[(nF + nq + 8) .+ (1:2)]
+    s = u[(nF + nq + 10) .+ (1:2)]
+    return 0.01 * Δ * F * F + sum([ψ .* s; β1 .* η1; β2 .* η2])
+end
+
+function terminal_cost(x, u)
+    q⁻ = x[1:nq]
+    q = x[nq .+ (1:nq)]
+    q̇ᵐ⁻ = (q - q⁻) ./ Δ
+    β1 = u[(nF + nq) .+ (1:2)]
+    β2 = u[(nF + nq + 2) .+ (1:2)]
+    η1 = u[(nF + nq + 4) .+ (1:2)]
+    η2 = u[(nF + nq + 6) .+ (1:2)]
+    ψ = u[(nF + nq + 8) .+ (1:2)]
+    s = u[(nF + nq + 10) .+ (1:2)]
+    complementarity = [ψ .* s; β1 .* η1; β2 .* η2]
+    return 200.0 * dot(q̇ᵐ⁻, q̇ᵐ⁻) +
+        700.0 * dot(q - qN, q - qN) +
+        0.01 * (dot(u, u) + dot(complementarity, complementarity))
+end
+
+function contact_equalities(x, u, p)
+    model = cartpole_model(p)
+    q⁻ = x[1:nq]
+    q = x[nq .+ (1:nq)]
+    q⁺ = u[nF .+ (1:nq)]
+    q̇ᵐ⁺ = (q⁺ - q) / Δ
+    F = u[nF]
+    β1 = u[(nF + nq) .+ (1:2)]
+    β2 = u[(nF + nq + 2) .+ (1:2)]
+    η1 = u[(nF + nq + 4) .+ (1:2)]
+    η2 = u[(nF + nq + 6) .+ (1:2)]
+    ψ = u[(nF + nq + 8) .+ (1:2)]
+    s = u[(nF + nq + 10) .+ (1:2)]
+    λ = [β1[1] - β1[2]; β2[1] - β2[2]]
+    γ1 = p[5] * (p[2] + p[1]) * p[4]
+    γ2 = p[6] * p[2] * p[4] * p[3]
+    return [
+        manipulator_fd(model, Δ, q⁻, q, q⁺, F, λ);
+        [q̇ᵐ⁺[1]; -q̇ᵐ⁺[1]] .+ ψ[1] - η1;
+        [q̇ᵐ⁺[2]; -q̇ᵐ⁺[2]] .+ ψ[2] - η2;
+        γ1 - sum(β1) - s[1];
+        γ2 - sum(β2) - s[2]
+    ]
+end
+
+function complementarity_constraints(x, u)
+    β1 = u[(nF + nq) .+ (1:2)]
+    β2 = u[(nF + nq + 2) .+ (1:2)]
+    η1 = u[(nF + nq + 4) .+ (1:2)]
+    η2 = u[(nF + nq + 6) .+ (1:2)]
+    ψ = u[(nF + nq + 8) .+ (1:2)]
+    s = u[(nF + nq + 10) .+ (1:2)]
+    return [ψ .* s; β1 .* η1; β2 .* η2]
+end
+
+dynamics = Dynamics(state_dynamics, nx, nu)
+stage_objective = Objective(stage_cost, nx, nu)
+terminal_objective = Objective(terminal_cost, nx, nu)
+equalities = EqualityConstraints(contact_equalities, nx, nu, npe)
+inequalities = InequalityConstraints(complementarity_constraints, nx, nu,
+    SVector{6, T}(zeros(T, 6)), SVector{6, T}(Inf * ones(T, 6)))
+control_limits = ControlLimits(
+    SVector{nu, T}([-T(10.0) * ones(T, nF); -T(Inf) * ones(T, nq); zeros(T, 12)]),
+    SVector{nu, T}([T(10.0) * ones(T, nF); T(Inf) * ones(T, nq); T(Inf) * ones(T, 12)]))
+
 for seed = 1:n_ocp
     Random.seed!(seed)
 
-    qN = T[0.0; π]
-
-    cartpole = Cartpole{T}(2, 1, 2,
+    equality_parameters = @SVector [
         T(0.9) + T(0.2) * rand(T),
         T(0.15) + T(0.1) * rand(T),
         T(0.45) + T(0.1) * rand(T),
         T(9.81),
-        T(0.05) .+ T(0.1) * rand(T, 2))
+        T(0.05) + T(0.1) * rand(T),
+        T(0.05) + T(0.1) * rand(T)]
+    cartpole = cartpole_model(equality_parameters)
+    empty_parameters = SVector{0, T}()
+    ocp_parameters = OCPParameters(
+        stage_objective=empty_parameters,
+        term_objective=empty_parameters,
+        dynamics=empty_parameters,
+        equality_constraints=equality_parameters,
+        inequality_constraints=empty_parameters)
 
-    nq = cartpole.nq
-    nF = cartpole.nu
-
-    # ## Dynamics - forward Euler
-
-    f = (x, u) -> [x[nq .+ (1:nq)]; u[nF .+ (1:nq)]]
-    dyn = Dynamics(f, nx, nu)
-
-    # ## Objective
-
-    function l(x, u)
-		F = u[1]
-        β1 = u[(nF + nq) .+ (1:2)]
-        β2 = u[(nF + nq + 2) .+ (1:2)]
-        η1 = u[(nF + nq + 4) .+ (1:2)]
-        η2 = u[(nF + nq + 6) .+ (1:2)]
-        ψ = u[(nF + nq + 8) .+ (1:2)]
-        s = u[(nF + nq + 10) .+ (1:2)]
-        J = 0.01 * Δ * F * F +
-            sum([ψ .* s; β1 .* η1; β2 .* η2])
-		return J
-	end
-	function lN(x, u)
-        q⁻ = x[1:cartpole.nq]
-		q = x[cartpole.nq .+ (1:cartpole.nq)] 
-		q̇ᵐ⁻ = (q - q⁻) ./ Δ
-
-		J = 200.0 * dot(q̇ᵐ⁻, q̇ᵐ⁻)
-		J += 700.0 * dot(q - qN, q - qN)
-
-        β1 = u[(nF + nq) .+ (1:2)]
-        β2 = u[(nF + nq + 2) .+ (1:2)]
-        η1 = u[(nF + nq + 4) .+ (1:2)]
-        η2 = u[(nF + nq + 6) .+ (1:2)]
-        ψ = u[(nF + nq + 8) .+ (1:2)]
-        s = u[(nF + nq + 10) .+ (1:2)]
-        complementarity = [ψ .* s; β1 .* η1; β2 .* η2]
-        J += 0.01 * (u' * u + complementarity' * complementarity)
-		return J
-	end
-	stage_obj = Objective(l, nx, nu)
-	term_obj = Objective(lN, nx, nu)
-
-    # ## Constraints
-
-    function h(x, u)
-        q⁻ = x[1:nq]
-        q = x[nq .+ (1:nq)]
-        q⁺ = u[nF .+ (1:nq)]
-        q̇ᵐ⁺ = (q⁺ - q) / Δ
-        F = u[nF]
-        β1 = u[(nF + nq) .+ (1:2)]
-        β2 = u[(nF + nq + 2) .+ (1:2)]
-        η1 = u[(nF + nq + 4) .+ (1:2)]
-        η2 = u[(nF + nq + 6) .+ (1:2)]
-        ψ = u[(nF + nq + 8) .+ (1:2)]
-        s = u[(nF + nq + 10) .+ (1:2)]
-        λ = [β1[1] - β1[2]; β2[1] - β2[2]]
-        γ1 = cartpole.friction[1] * (cartpole.mp + cartpole.mc) * cartpole.g
-        γ2 = cartpole.friction[2] * cartpole.mp * cartpole.g * cartpole.l
-        return [
-            manipulator_fd(cartpole, Δ, q⁻, q, q⁺, F, λ);
-            [q̇ᵐ⁺[1]; -q̇ᵐ⁺[1]] .+ ψ[1] - η1;
-            [q̇ᵐ⁺[2]; -q̇ᵐ⁺[2]] .+ ψ[2] - η2;
-            γ1 - sum(β1) - s[1];
-            γ2 - sum(β2) - s[2]
-        ]
-    end
-    function g(x, u)
-        β1 = u[(nF + nq) .+ (1:2)]
-        β2 = u[(nF + nq + 2) .+ (1:2)]
-        η1 = u[(nF + nq + 4) .+ (1:2)]
-        η2 = u[(nF + nq + 6) .+ (1:2)]
-        ψ = u[(nF + nq + 8) .+ (1:2)]
-        s = u[(nF + nq + 10) .+ (1:2)]
-        return [ψ .* s; β1 .* η1; β2 .* η2]
-    end
-    equalities = EqualityConstraints(h, nx, nu)
-    inequalities = InequalityConstraints(g, nx, nu,
-        SVector{6, T}(zeros(T, 6)), SVector{6, T}(Inf * ones(T, 6)))
-
-    # ## Control Limits
-
-    control_limits = ControlLimits(
-        SVector{nu, T}([-T(10.0) * ones(T, nF); -T(Inf) * ones(T, nq);       zeros(T, 12)]),
-        SVector{nu, T}([ T(10.0) * ones(T, nF);  T(Inf) * ones(T, nq); T(Inf) * ones(T, 12)])
-    )
-
-    ocp = build_ocp(N, stage_obj, term_obj, dyn,
-        equalities, inequalities, control_limits)
+    ocp = build_ocp(N, stage_objective, terminal_objective, dynamics,
+        equalities, inequalities, control_limits; parameters=ocp_parameters)
     solver = Solver(ocp; options=options)
     solver.options.verbose = verbose
     

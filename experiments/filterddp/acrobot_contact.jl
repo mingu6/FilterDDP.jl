@@ -29,12 +29,65 @@ options = Options{T}(verbose=verbose, optimality_tolerance=1e-7)
 results = Vector{Vector{Any}}()
 params = Vector{Vector{T}}()
 
+const npe::Int64 = 11
+const nq::Int64 = 2
+const nτ::Int64 = 1
+
+function double_pendulum(p)
+	return DoublePendulum{eltype(p)}(2, 1, 2,
+		p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8],
+		p[9], p[10], p[11])
+end
+
+state_dynamics = (x, u) -> [x[nq .+ (1:nq)]; u[nτ .+ (1:nq)]]
+
+function stage_cost(x, u)
+	τ = u[1]
+	complementarity = u[(nτ + nq) .+ (1:2)] .* u[(nτ + nq + 2) .+ (1:2)]
+	return 0.01 * Δ * τ * τ + 2.0 * sum(complementarity)
+end
+
+function terminal_cost(x, u)
+	q⁻ = x[1:nq]
+	q = x[nq .+ (1:nq)]
+	q̇ᵐ⁻ = (q - q⁻) ./ Δ
+	complementarity = u[(nτ + nq) .+ (1:2)] .* u[(nτ + nq + 2) .+ (1:2)]
+	return 200.0 * dot(q̇ᵐ⁻, q̇ᵐ⁻) +
+		700.0 * dot(q - qN, q - qN) +
+		0.01 * (dot(u, u) + dot(complementarity, complementarity))
+end
+
+function contact_equalities(x, u, p)
+	model = double_pendulum(p)
+	q⁻ = x[1:nq]
+	q = x[nq .+ (1:nq)]
+	q⁺ = u[nτ .+ (1:nq)]
+	τ = u[nτ]
+	λ = u[(nτ + nq) .+ (1:2)]
+	s = u[(nτ + nq + 2) .+ (1:2)]
+	return [
+		manipulator_fd(model, Δ, q⁻, q, q⁺, τ, λ);
+		s .- ϕ_func(model, q⁺)
+	]
+end
+
+complementarity_constraints = (x, u) ->
+	u[(nτ + nq) .+ (1:2)] .* u[(nτ + nq + 2) .+ (1:2)]
+
+dynamics = Dynamics(state_dynamics, nx, nu)
+stage_objective = Objective(stage_cost, nx, nu)
+terminal_objective = Objective(terminal_cost, nx, nu)
+equalities = EqualityConstraints(contact_equalities, nx, nu, npe)
+inequalities = InequalityConstraints(complementarity_constraints, nx, nu,
+	SVector{2, T}(zeros(T, 2)), SVector{2, T}(Inf * ones(T, 2)))
+control_limits = ControlLimits(
+	SVector{nu, T}([-T(8.0); -T(Inf) * ones(T, nq); zeros(T, 4)]),
+	SVector{nu, T}([T(8.0); T(Inf) * ones(T, nq); T(Inf) * ones(T, 4)]))
+
 for seed = 1:n_ocp
 	Random.seed!(seed)
-	
-	xN = T[qN; qN]
 
-	acrobot_impact = DoublePendulum{T}(2, 1, 2,
+	equality_parameters = @SVector [
 		T(0.9) + 0.2 * rand(T),
 		T(0.333), 
 		T(0.9) + 0.2 * rand(T),
@@ -43,68 +96,18 @@ for seed = 1:n_ocp
 		T(0.333), 
 		T(0.9) + 0.2 * rand(T),
 		T(0.5),
-		9.81, 0.0, 0.0)
+		T(9.81), T(0.0), T(0.0)]
+	acrobot_impact = double_pendulum(equality_parameters)
+	empty_parameters = SVector{0, T}()
+	ocp_parameters = OCPParameters(
+		stage_objective=empty_parameters,
+		term_objective=empty_parameters,
+		dynamics=empty_parameters,
+		equality_constraints=equality_parameters,
+		inequality_constraints=empty_parameters)
 
-	nq = acrobot_impact.nq
-	nτ = acrobot_impact.nu
-
-	# ## Dynamics - implicit variational integrator (midpoint)
-
-	f = (x, u) -> [x[nq .+ (1:nq)]; u[nτ .+ (1:nq)]]
-	dyn = Dynamics(f, nx, nu)
-
-	# ## Objective
-
-	function l(x, u)
-		τ = u[1]
-		complementarity = u[(nτ + nq) .+ (1:2)] .* u[(nτ + nq + 2) .+ (1:2)]
-		J = 0.01 * Δ * τ * τ + 2. * sum(complementarity)
-		return J
-	end
-	function lN(x, u)
-		q⁻ = x[1:acrobot_impact.nq] 
-		q = x[acrobot_impact.nq .+ (1:acrobot_impact.nq)] 
-		q̇ᵐ⁻ = (q - q⁻) ./ Δ
-
-		J = 200.0 * dot(q̇ᵐ⁻, q̇ᵐ⁻)
-		J += 700.0 * dot(q - qN, q - qN)
-
-		complementarity = u[(nτ + nq) .+ (1:2)] .* u[(nτ + nq + 2) .+ (1:2)]
-		J += 0.01 * (u' * u + complementarity' * complementarity)
-		return J
-	end
-	stage_obj = Objective(l, nx, nu)
-	term_obj = Objective(lN, nx, nu)
-
-	# ## Constraints
-
-	function h(x, u)
-		q⁻ = x[1:nq]
-		q = x[nq .+ (1:nq)]
-		q⁺ = u[nτ .+ (1:nq)]
-		τ = u[nτ]
-		λ = u[(nτ + nq) .+ (1:2)]
-		s = u[(nτ + nq + 2) .+ (1:2)]
-		return [
-			manipulator_fd(acrobot_impact, Δ, q⁻, q, q⁺, τ, λ);
-			s .- ϕ_func(acrobot_impact, q⁺)
-		]
-	end
-	g = (x, u) ->
-		u[(nτ + nq) .+ (1:2)] .* u[(nτ + nq + 2) .+ (1:2)]
-	equalities = EqualityConstraints(h, nx, nu)
-	inequalities = InequalityConstraints(g, nx, nu,
-		SVector{2, T}(zeros(T, 2)), SVector{2, T}(Inf * ones(T, 2)))
-
-	# ## Control Limits
-
-	control_limits = ControlLimits(
-		SVector{nu, T}([-T(8.0); -T(Inf) * ones(T, nq);          zeros(T, 4)]),
-		SVector{nu, T}([ T(8.0);  T(Inf) * ones(T, nq); T(Inf) * ones(T, 4)])
-	)
-
-	ocp = build_ocp(N, stage_obj, term_obj, dyn,
-		equalities, inequalities, control_limits)
+	ocp = build_ocp(N, stage_objective, terminal_objective, dynamics,
+		equalities, inequalities, control_limits; parameters=ocp_parameters)
 	solver = Solver(ocp; options=options)
 	solver.options.verbose = verbose
 

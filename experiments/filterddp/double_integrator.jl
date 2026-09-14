@@ -23,39 +23,24 @@ options = Options{T}(verbose=verbose, optimality_tolerance=1e-7)
 
 results = Vector{Vector{Any}}()
 
+dynamics = Dynamics((x, u) -> x + Δ * [x[2], u[1]], nx, nu)
+xN = T[1.0; 0.0]
+stage_objective = Objective(
+    (x, u) -> Δ * (2.0 * u[2] - u[1] * x[2]), nx, nu)
+terminal_objective = Objective(
+    (x, u) -> 500.0 * dot(x - xN, x - xN), nx, nu)
+equalities = EqualityConstraints(nx, nu)
+inequalities = InequalityConstraints(
+    (x, u) -> [u[2] - u[1] * x[2]],
+    nx, nu, @SVector([0.0]), @SVector([Inf]))
+control_limits = ControlLimits(
+    SVector{nu, T}([-10.0, 0.0]), SVector{nu, T}([10.0, Inf]))
+
+ocp = build_ocp(N, stage_objective, terminal_objective, dynamics,
+    equalities, inequalities, control_limits)
+
 for seed = 1:n_ocp
     Random.seed!(seed)
-
-    # ## Dynamics - forward Euler
-
-    f = (x, u) -> x + Δ * [x[2], u[1]]
-    dyn = Dynamics(f, nx, nu)
-
-    # ## Objective
-
-    xN_y = T(1.0)
-    xN_v = T(0.0)
-    xN = T[xN_y; xN_v]
-
-    l = (x, u) -> Δ * (2.0 * u[2] - u[1] * x[2])
-    lN = (x, u) -> 500.0 * dot(x - xN, x - xN)
-    stage_obj = Objective(l, nx, nu)
-	term_obj = Objective(lN, nx, nu)
-
-    # ## Constraints
-
-    equalities = EqualityConstraints(nx, nu)
-    inequalities = InequalityConstraints(
-        (x, u) -> [u[2] - u[1] * x[2]],
-        nx, nu, @SVector([0.0]), @SVector([Inf]))
-
-    # ## Control Limits
-
-    control_limits = ControlLimits(
-        SVector{nu, T}([-10.0, 0.0]), SVector{nu, T}([10.0, Inf]))
-
-    ocp = build_ocp(N, stage_obj, term_obj, dyn,
-        equalities, inequalities, control_limits)
     solver = Solver(ocp; options=options)
     solver.options.verbose = verbose
     

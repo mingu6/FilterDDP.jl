@@ -49,6 +49,7 @@ function rollout!(solver::Solver{T, nx, nu, nh, ng},
     inequalities = ocp.inequality_constraints
     slack_bounds = inequalities.bounds
     objective_scale = solver.scaling.objective
+    parameters = ocp.parameters
 
     data.status = 0
     data.primal_1_next = T(0.0)
@@ -104,12 +105,14 @@ function rollout!(solver::Solver{T, nx, nu, nh, ng},
 
         # evaluate constraints and violation
         if nh > 0
-            h = ocp.equality_constraints.h(x, u)
+            h = evaluate(ocp.equality_constraints.h, x, u,
+                parameters.equality_constraints)
             data.primal_1_next += norm(solver.scaling.equality[t] .* h, 1)
             data.barrier_lagrangian_next += dot(h, ϕ)
         end
         if ng > 0
-            q = inequalities.g(x, u) - s
+            q = evaluate(inequalities.g, x, u,
+                parameters.inequality_constraints) - s
             data.primal_1_next += norm(solver.scaling.inequality[t] .* q, 1)
             data.barrier_lagrangian_next += dot(q, ν)
         end
@@ -169,13 +172,17 @@ function rollout!(solver::Solver{T, nx, nu, nh, ng},
             data.barrier_lagrangian_next -= μ * dot(log.(su), slack_bounds.masku)
         end
         if t == ocp.N
-            data.barrier_lagrangian_next += objective_scale * ocp.term_objective.l(x, u)[1]
+            data.barrier_lagrangian_next += objective_scale *
+                evaluate(ocp.term_objective.l, x, u,
+                    parameters.term_objective)[1]
         else
-            data.barrier_lagrangian_next += objective_scale * ocp.stage_objective.l(x, u)[1]
+            data.barrier_lagrangian_next += objective_scale *
+                evaluate(ocp.stage_objective.l, x, u,
+                    parameters.stage_objective)[1]
         end
 
         if t < ocp.N
-            x = solver.ocp.dynamics.f(x, u)
+            x = evaluate(solver.ocp.dynamics.f, x, u, parameters.dynamics)
         end
     end
 end

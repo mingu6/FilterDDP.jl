@@ -27,6 +27,7 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
     dynamics = ocp.dynamics
     control_limits = ocp.control_limits
     slack_bounds = inequalities.bounds
+    parameters = ocp.parameters
     objective_scale = solver.scaling.objective
     reg_1 = objective_scale * options.reg_1
     reg_min = objective_scale * options.reg_min
@@ -62,28 +63,30 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
             # evaluate derivatives
 
             if t == ocp.N
-                lx = objective_scale .* ocp.term_objective.lx(x, u)
-                lu_ = objective_scale .* ocp.term_objective.lu(x, u)
-                lxx = objective_scale .* ocp.term_objective.lxx(x, u)
-                lux = objective_scale .* ocp.term_objective.lux(x, u)
-                luu = objective_scale .* ocp.term_objective.luu(x, u)
-                data.objective += ocp.term_objective.l(x, u)[1]
+                objective_parameters = parameters.term_objective
+                lx = objective_scale .* evaluate(ocp.term_objective.lx, x, u, objective_parameters)
+                lu_ = objective_scale .* evaluate(ocp.term_objective.lu, x, u, objective_parameters)
+                lxx = objective_scale .* evaluate(ocp.term_objective.lxx, x, u, objective_parameters)
+                lux = objective_scale .* evaluate(ocp.term_objective.lux, x, u, objective_parameters)
+                luu = objective_scale .* evaluate(ocp.term_objective.luu, x, u, objective_parameters)
+                data.objective += evaluate(ocp.term_objective.l, x, u, objective_parameters)[1]
             else
-                lx = objective_scale .* ocp.stage_objective.lx(x, u)
-                lu_ = objective_scale .* ocp.stage_objective.lu(x, u)
-                lxx = objective_scale .* ocp.stage_objective.lxx(x, u)
-                lux = objective_scale .* ocp.stage_objective.lux(x, u)
-                luu = objective_scale .* ocp.stage_objective.luu(x, u)
-                data.objective += ocp.stage_objective.l(x, u)[1]
+                objective_parameters = parameters.stage_objective
+                lx = objective_scale .* evaluate(ocp.stage_objective.lx, x, u, objective_parameters)
+                lu_ = objective_scale .* evaluate(ocp.stage_objective.lu, x, u, objective_parameters)
+                lxx = objective_scale .* evaluate(ocp.stage_objective.lxx, x, u, objective_parameters)
+                lux = objective_scale .* evaluate(ocp.stage_objective.lux, x, u, objective_parameters)
+                luu = objective_scale .* evaluate(ocp.stage_objective.luu, x, u, objective_parameters)
+                data.objective += evaluate(ocp.stage_objective.l, x, u, objective_parameters)[1]
             end
             
             if nh > 0
-                h = equalities.h(x, u)
-                hx = equalities.hx(x, u)
-                hu = equalities.hu(x, u)
-                hxx = equalities.hxx(x, u, ϕ)
-                hux = equalities.hux(x, u, ϕ)
-                huu = equalities.huu(x, u, ϕ)
+                h = evaluate(equalities.h, x, u, parameters.equality_constraints)
+                hx = evaluate(equalities.hx, x, u, parameters.equality_constraints)
+                hu = evaluate(equalities.hu, x, u, parameters.equality_constraints)
+                hxx = evaluate(equalities.hxx, x, u, parameters.equality_constraints, ϕ)
+                hux = evaluate(equalities.hux, x, u, parameters.equality_constraints, ϕ)
+                huu = evaluate(equalities.huu, x, u, parameters.equality_constraints, ϕ)
                 h_scale = solver.scaling.equality[t]
                 h_diagonal = diagm(h_scale)
                 h_scaled = h_scale .* h
@@ -95,12 +98,12 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
             end
 
             if ng > 0
-                g = inequalities.g(x, u)
-                gx = inequalities.gx(x, u)
-                gu = inequalities.gu(x, u)
-                gxx = inequalities.gxx(x, u, ν)
-                gux = inequalities.gux(x, u, ν)
-                guu = inequalities.guu(x, u, ν)
+                g = evaluate(inequalities.g, x, u, parameters.inequality_constraints)
+                gx = evaluate(inequalities.gx, x, u, parameters.inequality_constraints)
+                gu = evaluate(inequalities.gu, x, u, parameters.inequality_constraints)
+                gxx = evaluate(inequalities.gxx, x, u, parameters.inequality_constraints, ν)
+                gux = evaluate(inequalities.gux, x, u, parameters.inequality_constraints, ν)
+                guu = evaluate(inequalities.guu, x, u, parameters.inequality_constraints, ν)
                 q = g - s
                 g_scale = solver.scaling.inequality[t]
                 q_scaled = g_scale .* q
@@ -110,12 +113,13 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
                 data.primal_inf_raw = max(data.primal_inf_raw, norm(q, Inf))
             end
 
-            fx = dynamics.fx(x, u)
-            fu = dynamics.fu(x, u)
+            fx = evaluate(dynamics.fx, x, u, parameters.dynamics)
+            fu = evaluate(dynamics.fu, x, u, parameters.dynamics)
             unconstrained = nh == 0 && ng == 0
-            fxx = unconstrained ? dynamics.fxx(x, u, V̂x) : dynamics.fxx(x, u, λ)
-            fux = unconstrained ? dynamics.fux(x, u, V̂x) : dynamics.fux(x, u, λ)
-            fuu = unconstrained ? dynamics.fuu(x, u, V̂x) : dynamics.fuu(x, u, λ)
+            dynamics_multiplier = unconstrained ? V̂x : λ
+            fxx = evaluate(dynamics.fxx, x, u, parameters.dynamics, dynamics_multiplier)
+            fux = evaluate(dynamics.fux, x, u, parameters.dynamics, dynamics_multiplier)
+            fuu = evaluate(dynamics.fuu, x, u, parameters.dynamics, dynamics_multiplier)
 
             # evaluate barrier Lagrangian
 

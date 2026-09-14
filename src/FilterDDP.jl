@@ -9,6 +9,11 @@ using StaticArrays
 using RuntimeGeneratedFunctions
 RuntimeGeneratedFunctions.init(@__MODULE__)
 
+@inline evaluate(f, x, u, ::SVector{0}) = f(x, u)
+@inline evaluate(f, x, u, p) = f(x, u, p)
+@inline evaluate(f, x, u, ::SVector{0}, multiplier) = f(x, u, multiplier)
+@inline evaluate(f, x, u, p, multiplier) = f(x, u, p, multiplier)
+
 include(joinpath("ocp", "objective.jl"))
 include(joinpath("ocp", "dynamics.jl"))
 include(joinpath("ocp", "control_limits.jl"))
@@ -28,6 +33,7 @@ export InequalityConstraints
 export Dynamics
 export BoundConstraints
 export ControlLimits
+export OCPParameters
 export build_ocp
 export Solver,
     Options,

@@ -46,13 +46,47 @@ options = Options{Float64}(
     nlp_scaling_max_gradient=100.0)
 ```
 
-The default `nlp_scaling=false` preserves the original algorithm. When scaling is enabled, `solver.data.primal_inf` is the scaled infeasibility used by the stopping test; `solver.data.primal_inf_raw` retains the maximum constraint violation in the problem's original units. The reported objective remains in its original units.
+The default is `nlp_scaling=false`, though consider turning it on if you run into numerical issues that may be due to problem scaling. When scaling is enabled, `solver.data.primal_inf` is the scaled infeasibility used by the stopping test; `solver.data.primal_inf_raw` retains the maximum constraint violation in the problem's original units. The reported objective remains in its original units.
+
+## Fixed OCP Parameters
+
+Coefficients that vary between OCP instances but are not decision variables can be passed through statically sized parameter vectors. Parameterized objectives, dynamics, and constraints accept `(x, u, p)`, with the parameter dimension supplied as the final constructor argument. Derivatives are generated only with respect to `x` and `u`.
+
+```julia
+npo = 1
+npd = 1
+stage_objective = Objective(
+    (x, u, p) -> p[1] * dot(u, u), nx, nu, npo)
+terminal_objective = Objective(
+    (x, u, p) -> p[1] * dot(x - xN, x - xN), nx, nu, npo)
+dynamics = Dynamics(
+    (x, u, p) -> x + p[1] * u, nx, nu, npd)
+
+empty_parameters = SVector{0, Float64}()
+parameters = OCPParameters(
+    stage_objective=@SVector([2.0]),
+    term_objective=@SVector([200.0]),
+    dynamics=@SVector([0.01]),
+    equality_constraints=empty_parameters,
+    inequality_constraints=empty_parameters)
+ocp = build_ocp(N, stage_objective, terminal_objective, dynamics,
+    equalities, inequalities, control_limits; parameters=parameters)
+```
 
 ## Unconstrained (and Bound Constrained) Differential Dynamic Programming
 
 FilterDDP.jl also provides an efficient Julia implmentation of both the unconstrained DDP algorithm by Mayne et al. (1970) and the Interior Point DDP (IPDDP) algorithm by [Pavlov et al. (2021)](https://ieeexplore.ieee.org/document/9332234) specialised to control limits only. The unconstrained DDP algorithm is applied when neither equality nor inequality constraints are added and IPDDP is applied when only control limits are added. In both cases, the dynamics dual variable as defined by (8) and (13) in the FilterDDP paper are replaced with the value function gradient $\bar{V}_x^t$ due to improved numerical performance overall.
 
 A control-limits-only OCP can be constructed directly with `build_ocp(N, stage_objective, terminal_objective, dynamics, control_limits)`.
+
+If the OCP has only one class of nonlinear constraints, omit the empty class:
+
+```julia
+equality_only_ocp = build_ocp(N, stage_objective, terminal_objective,
+    dynamics, equalities, control_limits)
+inequality_only_ocp = build_ocp(N, stage_objective, terminal_objective,
+    dynamics, inequalities, control_limits)
+```
 
 ---
 
