@@ -44,10 +44,7 @@ stage_cost = (x, u) -> begin
     slack = u[2 .+ (1:no)]
     Δ * dot(u[1:2] .* [5.0, 1.0], u[1:2]) + 1000.0 * dot(slack, slack)
 end
-terminal_cost = (x, u) -> begin
-    slack = u[2 .+ (1:no)]
-    200.0 * dot(x - xN, x - xN) + 1000.0 * dot(slack, slack)
-end
+terminal_cost = x -> 200.0 * dot(x - xN, x - xN)
 
 function obstacle_constraints(x, u, p)
     return [
@@ -60,7 +57,7 @@ end
 
 dynamics = Dynamics(midpoint_dynamics, nx, nu)
 stage_objective = Objective(stage_cost, nx, nu)
-terminal_objective = Objective(terminal_cost, nx, nu)
+terminal_objective = TerminalObjective(terminal_cost, nx)
 equalities = EqualityConstraints(nx, nu)
 inequalities = InequalityConstraints(obstacle_constraints, nx, nu,
     SVector{no, T}(-Inf * ones(T, no)), SVector{no, T}(zeros(T, no)), npi)
@@ -117,7 +114,7 @@ for seed = 1:n_ocp
     end
     
     x1 = SVector{nx, T}(T[0.0; 0.0; π / 8; 0.0] + rand(T, nx) .* T[0.0; 0.0; π / 4; 0.0])
-    ū = [SVector{nu, T}([zeros(T, 2); T(1e-2) * ones(T, no)]) for _ = 1:N]
+    ū = [SVector{nu, T}([zeros(T, 2); T(1e-2) * ones(T, no)]) for _ = 1:N-1]
 
     solve!(solver, x1, ū)
     

@@ -63,8 +63,7 @@ end
 complementarity = (x, u) -> [u[5] * u[3]; u[6] * u[4]]
 stage_cost = (x, u) ->
     1e-2 * dot(u[1:2], u[1:2]) + 2.0 * sum(complementarity(x, u)) + 2.0 * u[8]
-terminal_cost = (x, u) ->
-    20.0 * dot(x - xN, x - xN) + 2.0 * sum(complementarity(x, u)) + 2.0 * u[8]
+terminal_cost = x -> 20.0 * dot(x - xN, x - xN)
 
 function contact_equalities(x, u, p)
     return [
@@ -82,7 +81,7 @@ end
 
 dynamics = Dynamics(pushing_dynamics, nx, nu, npd)
 stage_objective = Objective(stage_cost, nx, nu)
-terminal_objective = Objective(terminal_cost, nx, nu)
+terminal_objective = TerminalObjective(terminal_cost, nx)
 equalities = EqualityConstraints(contact_equalities, nx, nu, npe)
 inequalities = InequalityConstraints(pushing_inequalities, nx, nu,
     SVector{3, T}([0.0, 0.0, -Inf]), SVector{3, T}([Inf, Inf, 0.0]), npi)
@@ -141,7 +140,7 @@ for seed = 1:n_ocp
         
     # ## Initialise solver and solve
     
-    ū = [SVector{nu, T}(0.01 .* ones(T, nu)) for k = 1:N]
+    ū = [SVector{nu, T}(0.01 .* ones(T, nu)) for k = 1:N-1]
     solve!(solver, x1, ū)
 
     if benchmark
@@ -158,10 +157,10 @@ for seed = 1:n_ocp
     # ## Plot solution
 	if seed == 4 && visualise
 		x_sol, u_sol = get_trajectory(solver)
-        phidot = map(u -> u[3] - u[4] , u_sol[1:end-1])
-        fric_lim = map(u -> μ_fric * u[1], u_sol[1:end-1])
-        negfric_lim = map(u -> -μ_fric * u[1], u_sol[1:end-1])
-        ft = map(u -> u[2], u_sol[1:end-1])
+    phidot = map(u -> u[3] - u[4] , u_sol)
+    fric_lim = map(u -> μ_fric * u[1], u_sol)
+    negfric_lim = map(u -> -μ_fric * u[1], u_sol)
+    ft = map(u -> u[2], u_sol)
         plot(range(0, Δ * (N-1), N-1), phidot, xtickfontsize=14, ytickfontsize=14, xlabel=L"$t$", ylabel="meters per second",
 			legendfontsize=14, linewidth=2, xlabelfontsize=14, ylabelfontsize=14, linestyle=:solid, linecolor=1, 
             legendposition=:bottomleft, legendtitleposition=:left, ylims=(-5, 5), fontfamily="Computer Modern",

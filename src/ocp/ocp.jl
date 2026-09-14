@@ -1,18 +1,18 @@
-struct OCPParameters{T, npo, npd, npe, npi}
-    stage_objective::SVector{npo, T}
-    term_objective::SVector{npo, T}
+struct OCPParameters{T, nps, npt, npd, npe, npi}
+    stage_objective::SVector{nps, T}
+    term_objective::SVector{npt, T}
     dynamics::SVector{npd, T}
     equality_constraints::SVector{npe, T}
     inequality_constraints::SVector{npi, T}
 end
 
 function OCPParameters(;
-        stage_objective::SVector{npo, T},
-        term_objective::SVector{npo, T},
+        stage_objective::SVector{nps, T},
+        term_objective::SVector{npt, T},
         dynamics::SVector{npd, T},
         equality_constraints::SVector{npe, T},
         inequality_constraints::SVector{npi, T}
-        ) where {T<:Real, npo, npd, npe, npi}
+        ) where {T<:Real, nps, npt, npd, npe, npi}
     return OCPParameters(stage_objective, term_objective, dynamics,
         equality_constraints, inequality_constraints)
 end
@@ -22,7 +22,7 @@ function OCPParameters(::Type{T}) where {T<:Real}
     return OCPParameters(empty, empty, empty, empty, empty)
 end
 
-struct OCP{T, nx, nu, nh, ng, npo, npd, npe, npi, D, E, I, C, OS, OT}
+struct OCP{T, nx, nu, nh, ng, nps, npt, npd, npe, npi, D, E, I, C, OS, OT}
     N::Int64
     stage_objective::OS
     term_objective::OT
@@ -30,52 +30,53 @@ struct OCP{T, nx, nu, nh, ng, npo, npd, npe, npi, D, E, I, C, OS, OT}
     equality_constraints::E
     inequality_constraints::I
     control_limits::C
-    parameters::OCPParameters{T, npo, npd, npe, npi}
+    parameters::OCPParameters{T, nps, npt, npd, npe, npi}
 end
 
-function build_ocp(N::Int64, stage_objective::Objective{nx, nu, npo},
-        term_objective::Objective{nx, nu, npo}, dynamics::Dynamics{nx, nu, npd},
+function build_ocp(N::Int64, stage_objective::Objective{nx, nu, nps},
+        term_objective::TerminalObjective{nx, npt}, dynamics::Dynamics{nx, nu, npd},
         equality_constraints::EqualityConstraints{nx, nu, nh, npe},
         inequality_constraints::InequalityConstraints{T, nx, nu, ng, npi},
         control_limits::ControlLimits{T, nu};
-        parameters::OCPParameters{T, npo, npd, npe, npi}=OCPParameters(T)
-        ) where {T<:Real, nx, nu, nh, ng, npo, npd, npe, npi}
-    return OCP{T, nx, nu, nh, ng, npo, npd, npe, npi, typeof(dynamics),
+        parameters::OCPParameters{T, nps, npt, npd, npe, npi}=OCPParameters(T)
+        ) where {T<:Real, nx, nu, nh, ng, nps, npt, npd, npe, npi}
+    N >= 2 || throw(ArgumentError("horizon must contain at least two state knots"))
+    return OCP{T, nx, nu, nh, ng, nps, npt, npd, npe, npi, typeof(dynamics),
         typeof(equality_constraints), typeof(inequality_constraints),
         typeof(control_limits), typeof(stage_objective), typeof(term_objective)}(
         N, stage_objective, term_objective, dynamics, equality_constraints,
         inequality_constraints, control_limits, parameters)
 end
 
-function build_ocp(N::Int64, stage_objective::Objective{nx, nu, npo},
-    term_objective::Objective{nx, nu, npo}, dynamics::Dynamics{nx, nu, npd},
+function build_ocp(N::Int64, stage_objective::Objective{nx, nu, nps},
+    term_objective::TerminalObjective{nx, npt}, dynamics::Dynamics{nx, nu, npd},
     inequality_constraints::InequalityConstraints{T, nx, nu, ng, npi},
     control_limits::ControlLimits{T, nu};
-    parameters::OCPParameters{T, npo, npd, 0, npi}=OCPParameters(T)
-    ) where {T<:Real, nx, nu, ng, npo, npd, npi}
+    parameters::OCPParameters{T, nps, npt, npd, 0, npi}=OCPParameters(T)
+    ) where {T<:Real, nx, nu, ng, nps, npt, npd, npi}
     equality_constraints = EqualityConstraints(nx, nu)
     return build_ocp(N, stage_objective, term_objective, dynamics,
         equality_constraints, inequality_constraints, control_limits;
         parameters=parameters)
 end
 
-function build_ocp(N::Int64, stage_objective::Objective{nx, nu, npo},
-    term_objective::Objective{nx, nu, npo}, dynamics::Dynamics{nx, nu, npd},
+function build_ocp(N::Int64, stage_objective::Objective{nx, nu, nps},
+    term_objective::TerminalObjective{nx, npt}, dynamics::Dynamics{nx, nu, npd},
     equality_constraints::EqualityConstraints{nx, nu, nh, npe},
     control_limits::ControlLimits{T, nu};
-    parameters::OCPParameters{T, npo, npd, npe, 0}=OCPParameters(T)
-    ) where {T<:Real, nx, nu, nh, npo, npd, npe}
+    parameters::OCPParameters{T, nps, npt, npd, npe, 0}=OCPParameters(T)
+    ) where {T<:Real, nx, nu, nh, nps, npt, npd, npe}
     inequality_constraints = InequalityConstraints(T, nx, nu)
     return build_ocp(N, stage_objective, term_objective, dynamics,
         equality_constraints, inequality_constraints, control_limits;
         parameters=parameters)
 end
 
-function build_ocp(N::Int64, stage_objective::Objective{nx, nu, npo},
-    term_objective::Objective{nx, nu, npo}, dynamics::Dynamics{nx, nu, npd},
+function build_ocp(N::Int64, stage_objective::Objective{nx, nu, nps},
+    term_objective::TerminalObjective{nx, npt}, dynamics::Dynamics{nx, nu, npd},
     control_limits::ControlLimits{T, nu};
-    parameters::OCPParameters{T, npo, npd, 0, 0}=OCPParameters(T)
-    ) where {T<:Real, nx, nu, npo, npd}
+    parameters::OCPParameters{T, nps, npt, npd, 0, 0}=OCPParameters(T)
+    ) where {T<:Real, nx, nu, nps, npt, npd}
     equality_constraints = EqualityConstraints(nx, nu)
     return build_ocp(N, stage_objective, term_objective, dynamics,
     equality_constraints, control_limits; parameters=parameters)

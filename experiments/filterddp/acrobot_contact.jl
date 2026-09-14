@@ -47,14 +47,12 @@ function stage_cost(x, u)
 	return 0.01 * Δ * τ * τ + 2.0 * sum(complementarity)
 end
 
-function terminal_cost(x, u)
+function terminal_cost(x)
 	q⁻ = x[1:nq]
 	q = x[nq .+ (1:nq)]
 	q̇ᵐ⁻ = (q - q⁻) ./ Δ
-	complementarity = u[(nτ + nq) .+ (1:2)] .* u[(nτ + nq + 2) .+ (1:2)]
 	return 200.0 * dot(q̇ᵐ⁻, q̇ᵐ⁻) +
-		700.0 * dot(q - qN, q - qN) +
-		0.01 * (dot(u, u) + dot(complementarity, complementarity))
+		700.0 * dot(q - qN, q - qN)
 end
 
 function contact_equalities(x, u, p)
@@ -76,7 +74,7 @@ complementarity_constraints = (x, u) ->
 
 dynamics = Dynamics(state_dynamics, nx, nu)
 stage_objective = Objective(stage_cost, nx, nu)
-terminal_objective = Objective(terminal_cost, nx, nu)
+terminal_objective = TerminalObjective(terminal_cost, nx)
 equalities = EqualityConstraints(contact_equalities, nx, nu, npe)
 inequalities = InequalityConstraints(complementarity_constraints, nx, nu,
 	SVector{2, T}(zeros(T, 2)), SVector{2, T}(Inf * ones(T, 2)))
@@ -114,7 +112,7 @@ for seed = 1:n_ocp
 	# ## Initialise solver and solve
 	
 	x1 = SVector{4, T}(zeros(T, 4))
-	ū = [SVector{nu, T}([zeros(T, nτ + 2); T(0.01) * ones(T, 4)]) for _ = 1:N]
+	ū = [SVector{nu, T}([zeros(T, nτ + 2); T(0.01) * ones(T, 4)]) for _ = 1:N-1]
 	solve!(solver, x1, ū)
 
 	if benchmark
@@ -135,8 +133,8 @@ for seed = 1:n_ocp
 		θe = map(x -> x[4], x_sol[1:end-1])
 		s1 = map(θ -> π / 2 - θ, θe)
 		s2 = map(θ -> θ + π / 2, θe)
-		λ1 = map(u -> u[4], u_sol[1:end-1])
-		λ2 = map(u -> u[5], u_sol[1:end-1])
+		λ1 = map(u -> u[4], u_sol)
+		λ2 = map(u -> u[5], u_sol)
 		plot!(range(0, Δ * (N-1), N-1), [s1 s2 λ1 λ2], xtickfontsize=16, ytickfontsize=16, xlabel=L"$t$", ylims=(0,5),
 			legendfontsize=16, linewidth=2, xlabelfontsize=16, linestyle=[:solid :solid :dash :dash], linecolor=[1 2 1 2], 
 			legend_columns=-1, fontfamily="Computer Modern",

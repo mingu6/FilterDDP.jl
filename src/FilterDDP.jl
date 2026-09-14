@@ -13,6 +13,8 @@ RuntimeGeneratedFunctions.init(@__MODULE__)
 @inline evaluate(f, x, u, p) = f(x, u, p)
 @inline evaluate(f, x, u, ::SVector{0}, multiplier) = f(x, u, multiplier)
 @inline evaluate(f, x, u, p, multiplier) = f(x, u, p, multiplier)
+@inline evaluate(f, x, ::SVector{0}) = f(x)
+@inline evaluate(f, x, p) = f(x, p)
 
 include(joinpath("ocp", "objective.jl"))
 include(joinpath("ocp", "dynamics.jl"))
@@ -28,6 +30,7 @@ include("print.jl")
 include("solve.jl")
 
 export Objective
+export TerminalObjective
 export EqualityConstraints
 export InequalityConstraints
 export Dynamics

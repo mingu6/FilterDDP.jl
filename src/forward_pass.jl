@@ -56,7 +56,7 @@ function rollout!(solver::Solver{T, nx, nu, nh, ng},
     data.barrier_lagrangian_next = T(0.0)
 
     x = solver.nominal[1].x
-    for t = 1:ocp.N
+    for t = eachindex(solver.nominal)
 
         x̄ = solver.nominal[t].x
         ū = solver.nominal[t].u
@@ -171,18 +171,12 @@ function rollout!(solver::Solver{T, nx, nu, nh, ng},
             data.barrier_lagrangian_next -= μ * dot(log.(sl), slack_bounds.maskl)
             data.barrier_lagrangian_next -= μ * dot(log.(su), slack_bounds.masku)
         end
-        if t == ocp.N
-            data.barrier_lagrangian_next += objective_scale *
-                evaluate(ocp.term_objective.l, x, u,
-                    parameters.term_objective)[1]
-        else
-            data.barrier_lagrangian_next += objective_scale *
-                evaluate(ocp.stage_objective.l, x, u,
-                    parameters.stage_objective)[1]
-        end
-
-        if t < ocp.N
-            x = evaluate(solver.ocp.dynamics.f, x, u, parameters.dynamics)
-        end
+        data.barrier_lagrangian_next += objective_scale *
+            evaluate(ocp.stage_objective.l, x, u,
+                parameters.stage_objective)[1]
+        x = evaluate(solver.ocp.dynamics.f, x, u, parameters.dynamics)
     end
+    solver.current_terminal_state[] = x
+    data.barrier_lagrangian_next += objective_scale *
+        evaluate(ocp.term_objective.l, x, parameters.term_objective)[1]
 end

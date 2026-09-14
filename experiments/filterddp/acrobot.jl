@@ -42,12 +42,11 @@ acrobot_dynamics = (x, u, p) ->
 	x + Δ .* acrobot_explicit(double_pendulum(p), x, u)
 stage_cost = (x, u) ->
 	Δ * (2.0 * dot(u, u) + dot(x - xN, Q * (x - xN)))
-terminal_cost = (x, u) ->
-	1000.0 * dot(x - xN, Q * (x - xN)) + 2.0 * dot(u, u)
+terminal_cost = x -> 1000.0 * dot(x - xN, Q * (x - xN))
 
 dynamics = Dynamics(acrobot_dynamics, nx, nu, npd)
 stage_objective = Objective(stage_cost, nx, nu)
-terminal_objective = Objective(terminal_cost, nx, nu)
+terminal_objective = TerminalObjective(terminal_cost, nx)
 equalities = EqualityConstraints(nx, nu)
 
 lim = use_control_limits ? T(8.0) : T(Inf)
@@ -84,7 +83,7 @@ for seed = 1:n_ocp
 	# ## Initialise solver and solve
 	
 	x1 = @SVector zeros(T, nx)
-	ū = [SVector{nu, T}(zeros(T, nu)) for _ = 1:N]
+	ū = [SVector{nu, T}(zeros(T, nu)) for _ = 1:N-1]
 	solve!(solver, x1, ū)
 
 	if benchmark

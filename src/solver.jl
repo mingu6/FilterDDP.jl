@@ -84,6 +84,8 @@ struct Solver{T, nx, nu, nh, ng, nux, nhx, ngx, O}
     ocp::O
     nominal::Vector{TrajectoryElement{T, nx, nu, nh, ng}}
     current::Vector{TrajectoryElement{T, nx, nu, nh, ng}}
+    nominal_terminal_state::Base.RefValue{SVector{nx, T}}
+    current_terminal_state::Base.RefValue{SVector{nx, T}}
     update::Vector{UpdateRule{T, nx, nu, nh, ng, nux, nhx, ngx}}
 	data::SolverData{T}
     options::Options{T}
@@ -92,17 +94,23 @@ end
 
 function Solver(ocp::OCP{T, nx, nu, nh, ng};
         options::Union{Options{T}, Nothing}=nothing) where {T, nx, nu, nh, ng}
-    nominal = [TrajectoryElement(T, nx, nu, nh, ng) for _ = 1:ocp.N]
-    current = [TrajectoryElement(T, nx, nu, nh, ng) for _ = 1:ocp.N]
-    update = [UpdateRule(T, nx, nu, nh, ng) for _ = 1:ocp.N]
+    nstages = ocp.N - 1
+    nominal = [TrajectoryElement(T, nx, nu, nh, ng) for _ = 1:nstages]
+    current = [TrajectoryElement(T, nx, nu, nh, ng) for _ = 1:nstages]
+    terminal_state = SVector{nx, T}(zeros(T, nx))
+    nominal_terminal_state = Ref(terminal_state)
+    current_terminal_state = Ref(terminal_state)
+    update = [UpdateRule(T, nx, nu, nh, ng) for _ = 1:nstages]
     data = solver_data(T)
     options = isnothing(options) ? Options{T}() : options
-    scaling = NLPScaling(T, ocp.N, nh, ng)
-	return Solver(ocp, nominal, current, update, data, options, scaling)
+    scaling = NLPScaling(T, nstages, nh, ng)
+	return Solver(ocp, nominal, current, nominal_terminal_state,
+        current_terminal_state, update, data, options, scaling)
 end
 
 function get_trajectory(solver::Solver)
     x = [nom.x for nom in solver.nominal]
+    push!(x, solver.nominal_terminal_state[])
     u = [nom.u for nom in solver.nominal]
 	return x, u
 end
@@ -136,8 +144,11 @@ function initialize_trajectory!(solver::Solver{T, nx, nu, nh, ng},
     inequalities = solver.ocp.inequality_constraints
     slack_bounds = inequalities.bounds
     parameters = solver.ocp.parameters
+    nstages = solver.ocp.N - 1
+    length(u) == nstages || throw(DimensionMismatch(
+        "expected $(nstages) controls for $(solver.ocp.N) state knots, got $(length(u))"))
     x = x1
-    for t = 1:solver.ocp.N
+    for t = 1:nstages
         ūt = initialize_interior(
             u[t], control_limits, options.κ_1, options.κ_2)
         s̄t = ng > 0 ? evaluate(
@@ -152,15 +163,14 @@ function initialize_trajectory!(solver::Solver{T, nx, nu, nh, ng},
         zsu = options.ineq_dual_init .* SVector{ng, T}(slack_bounds.masku)
 
         solver.nominal[t] = TrajectoryElement(x, ūt, s, ϕ, ν, zl, zu, zsl, zsu)
-        
-        if t < solver.ocp.N
-            x = evaluate(solver.ocp.dynamics.f, x, ūt, parameters.dynamics)
-        end
+        x = evaluate(solver.ocp.dynamics.f, x, ūt, parameters.dynamics)
     end
+    solver.nominal_terminal_state[] = x
+    solver.current_terminal_state[] = x
     compute_nlp_scaling!(solver)
     dual_scale = solver.scaling.objective
     if dual_scale != one(T)
-        for t = 1:solver.ocp.N
+        for t = eachindex(solver.nominal)
             element = solver.nominal[t]
             solver.nominal[t] = TrajectoryElement(
                 element.x, element.u, element.s, element.ϕ, element.ν,
@@ -187,15 +197,14 @@ function compute_nlp_scaling!(solver::Solver{T, nx, nu, nh, ng}) where {T, nx, n
     options.nlp_scaling || return nothing
 
     objective_gradient_norm = zero(T)
-    for t = 1:solver.ocp.N
+    for t = eachindex(solver.nominal)
         element = solver.nominal[t]
-        objective = t == solver.ocp.N ? solver.ocp.term_objective : solver.ocp.stage_objective
-        objective_parameters = t == solver.ocp.N ?
-            parameters.term_objective : parameters.stage_objective
         objective_gradient_norm = max(
             objective_gradient_norm,
-            norm(evaluate(objective.lx, element.x, element.u, objective_parameters), Inf),
-            norm(evaluate(objective.lu, element.x, element.u, objective_parameters), Inf))
+            norm(evaluate(solver.ocp.stage_objective.lx, element.x, element.u,
+                parameters.stage_objective), Inf),
+            norm(evaluate(solver.ocp.stage_objective.lu, element.x, element.u,
+                parameters.stage_objective), Inf))
 
         if nh > 0
             hx = evaluate(solver.ocp.equality_constraints.hx,
@@ -219,13 +228,16 @@ function compute_nlp_scaling!(solver::Solver{T, nx, nu, nh, ng}) where {T, nx, n
             end)
         end
     end
+    objective_gradient_norm = max(objective_gradient_norm,
+        norm(evaluate(solver.ocp.term_objective.lx,
+            solver.nominal_terminal_state[], parameters.term_objective), Inf))
     scaling.objective = gradient_scale(max_gradient, objective_gradient_norm)
     return nothing
 end
 
 function rescale_duals!(solver::Solver{T}, scale::T) where T
     scale == one(T) && return nothing
-    for t = 1:solver.ocp.N
+    for t = eachindex(solver.nominal)
         element = solver.nominal[t]
         solver.nominal[t] = TrajectoryElement(
             element.x, element.u, element.s,
@@ -237,9 +249,10 @@ function rescale_duals!(solver::Solver{T}, scale::T) where T
 end
 
 function update_nominal_trajectory!(solver::Solver)
-    for t = 1:solver.ocp.N
+    for t = eachindex(solver.nominal)
         solver.nominal[t] = solver.current[t]
     end
+    solver.nominal_terminal_state[] = solver.current_terminal_state[]
     return nothing
 end
 

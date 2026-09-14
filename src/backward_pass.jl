@@ -32,14 +32,19 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
     reg_1 = objective_scale * options.reg_1
     reg_min = objective_scale * options.reg_min
     reg_max = objective_scale * options.reg_max
+    nstages = ocp.N - 1
     ni = (control_limits.nl + control_limits.nu +
-        slack_bounds.nl + slack_bounds.nu) * ocp.N
+        slack_bounds.nl + slack_bounds.nu) * nstages
+    terminal_state = solver.nominal_terminal_state[]
+    terminal_parameters = parameters.term_objective
     
     while reg <= reg_max
         data.status = 0
-        V̂x = @SVector zeros(T, nx)
-        V̂xx = @SMatrix zeros(T, nx, nx)
-        λ = @SVector zeros(T, nx)
+        V̂x = objective_scale .* evaluate(
+            ocp.term_objective.lx, terminal_state, terminal_parameters)
+        V̂xx = objective_scale .* evaluate(
+            ocp.term_objective.lxx, terminal_state, terminal_parameters)
+        λ = V̂x
 
         data.barrier_lagrangian_curr = T(0.0)
         data.primal_1_curr = T(0.0)
@@ -47,13 +52,14 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
         data.primal_inf_raw = T(0.0)
         data.cs_inf_μ = T(0.0)
         data.cs_inf_0 = T(0.0)
-        data.objective = T(0.0)
+        data.objective = evaluate(
+            ocp.term_objective.l, terminal_state, terminal_parameters)[1]
         data.dual_inf = T(0.0)
         data.expected_change_L = T(0.0)
         ϕ_norm = T(0.0)
         z_norm = T(0.0) 
         
-        for t = ocp.N:-1:1
+        for t = nstages:-1:1
             element = traj[t]
             x, u, s = element.x, element.u, element.s
             ϕ, ν = element.ϕ, element.ν
@@ -62,23 +68,13 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
 
             # evaluate derivatives
 
-            if t == ocp.N
-                objective_parameters = parameters.term_objective
-                lx = objective_scale .* evaluate(ocp.term_objective.lx, x, u, objective_parameters)
-                lu_ = objective_scale .* evaluate(ocp.term_objective.lu, x, u, objective_parameters)
-                lxx = objective_scale .* evaluate(ocp.term_objective.lxx, x, u, objective_parameters)
-                lux = objective_scale .* evaluate(ocp.term_objective.lux, x, u, objective_parameters)
-                luu = objective_scale .* evaluate(ocp.term_objective.luu, x, u, objective_parameters)
-                data.objective += evaluate(ocp.term_objective.l, x, u, objective_parameters)[1]
-            else
-                objective_parameters = parameters.stage_objective
-                lx = objective_scale .* evaluate(ocp.stage_objective.lx, x, u, objective_parameters)
-                lu_ = objective_scale .* evaluate(ocp.stage_objective.lu, x, u, objective_parameters)
-                lxx = objective_scale .* evaluate(ocp.stage_objective.lxx, x, u, objective_parameters)
-                lux = objective_scale .* evaluate(ocp.stage_objective.lux, x, u, objective_parameters)
-                luu = objective_scale .* evaluate(ocp.stage_objective.luu, x, u, objective_parameters)
-                data.objective += evaluate(ocp.stage_objective.l, x, u, objective_parameters)[1]
-            end
+            objective_parameters = parameters.stage_objective
+            lx = objective_scale .* evaluate(ocp.stage_objective.lx, x, u, objective_parameters)
+            lu_ = objective_scale .* evaluate(ocp.stage_objective.lu, x, u, objective_parameters)
+            lxx = objective_scale .* evaluate(ocp.stage_objective.lxx, x, u, objective_parameters)
+            lux = objective_scale .* evaluate(ocp.stage_objective.lux, x, u, objective_parameters)
+            luu = objective_scale .* evaluate(ocp.stage_objective.luu, x, u, objective_parameters)
+            data.objective += evaluate(ocp.stage_objective.l, x, u, objective_parameters)[1]
             
             if nh > 0
                 h = evaluate(equalities.h, x, u, parameters.equality_constraints)
@@ -364,7 +360,7 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
             end
         end
         scaling_dual = max(options.s_max,
-            (ϕ_norm + z_norm) / max(ni + (nh + ng) * ocp.N, 1.0)) / options.s_max
+            (ϕ_norm + z_norm) / max(ni + (nh + ng) * nstages, 1.0)) / options.s_max
         scaling_cs = max(options.s_max, z_norm / max(ni, 1.0))  / options.s_max
         data.dual_inf /= scaling_dual
         data.cs_inf_0 /= scaling_cs

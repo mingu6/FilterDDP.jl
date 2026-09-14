@@ -27,8 +27,8 @@ dynamics = Dynamics((x, u) -> x + Δ * [x[2], u[1]], nx, nu)
 xN = T[1.0; 0.0]
 stage_objective = Objective(
     (x, u) -> Δ * (2.0 * u[2] - u[1] * x[2]), nx, nu)
-terminal_objective = Objective(
-    (x, u) -> 500.0 * dot(x - xN, x - xN), nx, nu)
+terminal_objective = TerminalObjective(
+    x -> 500.0 * dot(x - xN, x - xN), nx)
 equalities = EqualityConstraints(nx, nu)
 inequalities = InequalityConstraints(
     (x, u) -> [u[2] - u[1] * x[2]],
@@ -46,7 +46,7 @@ for seed = 1:n_ocp
     
     # ## Initialise solver and solve
     
-    ū = [SVector{nu, T}([0.01; 0.01]) for k = 1:N]
+    ū = [SVector{nu, T}([0.01; 0.01]) for k = 1:N-1]
     solve!(solver, x1, ū)
 
     if benchmark

@@ -50,20 +50,12 @@ function stage_cost(x, u)
     return 0.01 * Δ * F * F + sum([ψ .* s; β1 .* η1; β2 .* η2])
 end
 
-function terminal_cost(x, u)
+function terminal_cost(x)
     q⁻ = x[1:nq]
     q = x[nq .+ (1:nq)]
     q̇ᵐ⁻ = (q - q⁻) ./ Δ
-    β1 = u[(nF + nq) .+ (1:2)]
-    β2 = u[(nF + nq + 2) .+ (1:2)]
-    η1 = u[(nF + nq + 4) .+ (1:2)]
-    η2 = u[(nF + nq + 6) .+ (1:2)]
-    ψ = u[(nF + nq + 8) .+ (1:2)]
-    s = u[(nF + nq + 10) .+ (1:2)]
-    complementarity = [ψ .* s; β1 .* η1; β2 .* η2]
     return 200.0 * dot(q̇ᵐ⁻, q̇ᵐ⁻) +
-        700.0 * dot(q - qN, q - qN) +
-        0.01 * (dot(u, u) + dot(complementarity, complementarity))
+    700.0 * dot(q - qN, q - qN)
 end
 
 function contact_equalities(x, u, p)
@@ -103,7 +95,7 @@ end
 
 dynamics = Dynamics(state_dynamics, nx, nu)
 stage_objective = Objective(stage_cost, nx, nu)
-terminal_objective = Objective(terminal_cost, nx, nu)
+terminal_objective = TerminalObjective(terminal_cost, nx)
 equalities = EqualityConstraints(contact_equalities, nx, nu, npe)
 inequalities = InequalityConstraints(complementarity_constraints, nx, nu,
     SVector{6, T}(zeros(T, 6)), SVector{6, T}(Inf * ones(T, 6)))
@@ -138,8 +130,8 @@ for seed = 1:n_ocp
     # ## Initialise solver and solve
     
 	x1 = @SVector zeros(T, 4)
-    q_init = [@SVector zeros(T, 2) for _ = 1:N]
-    ū = [SVector{nu, T}([zeros(T, nF); q_init[k]; T(0.01) * ones(T, 12)]) for k = 1:N]
+    q_init = [@SVector zeros(T, 2) for _ = 1:N-1]
+    ū = [SVector{nu, T}([zeros(T, nF); q_init[k]; T(0.01) * ones(T, 12)]) for k = 1:N-1]
     
     solve!(solver, x1, ū)
 
@@ -168,9 +160,9 @@ for seed = 1:n_ocp
         qdotplus = map(x -> (x[3:4] - x[1:2]) / Δ , x_sol[1:end-1])
         qd1 = map(q -> q[1], qdotplus)
         qd2 = map(q -> q[2], qdotplus)
-		λ1 = map(u -> (u[4] - u[5]) * 3.5, u_sol[1:end-1])
-		λ2 = map(u -> (u[6] - u[7]) * 15, u_sol[1:end-1])
-        F = map(u -> u[1], u_sol[1:end-1])
+		λ1 = map(u -> (u[4] - u[5]) * 3.5, u_sol)
+		λ2 = map(u -> (u[6] - u[7]) * 15, u_sol)
+        F = map(u -> u[1], u_sol)
         isdir("plots") || mkpath("plots")
 		plot(range(0, Δ * (N-1), N-1), [qd1 qd2 λ1 λ2 F], xtickfontsize=16, ytickfontsize=16, xlabel=L"$t$", ylims=(-10,14),
 			legendfontsize=14, linewidth=2, xlabelfontsize=16, linestyle=[:solid :solid :dash :dash :solid], linecolor=[1 2 1 2 3], 

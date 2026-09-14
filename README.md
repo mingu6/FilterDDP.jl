@@ -11,15 +11,15 @@ Furthermore, an interior point extension analogous to [Pavlov et al. (2021)](htt
 FilterDDP can solve OCPs of the form
 ```math
 \begin{array}{rl}
-    \underset{\mathbf{x}, \mathbf{u}}{\text{minimize}}  & J(\mathbf{x}, \mathbf{u}) = \sum_{t=1}^{N-1} \ell(x_t, u_t) + \ell^F(x_t, u_t) \\
+    \underset{\mathbf{x}, \mathbf{u}}{\text{minimize}}  & J(\mathbf{x}, \mathbf{u}) = \sum_{t=1}^{N-1} \ell(x_t, u_t) + \ell^N(x_N) \\
     \text{subject to} & x_1 = \hat{x}_1, \\
     & x_{t+1} = f(x_t, u_t) \quad \text{for } t \in\{1,\dots, N-1\}, \\
-    & h(x_t, u_t) = 0 \quad \text{for } t \in\{1,\dots, N\}, \\
-    & b_g^L \leq g(x_t, u_t) \leq b_g^U \quad \text{for } t \in\{1,\dots, N\}, \\
-    & b_u^L \leq u_t \leq b_u^U \quad \text{for } t \in\{1,\dots, N\},
+    & h(x_t, u_t) = 0 \quad \text{for } t \in\{1,\dots, N-1\}, \\
+    & b_g^L \leq g(x_t, u_t) \leq b_g^U \quad \text{for } t \in\{1,\dots, N-1\}, \\
+    & b_u^L \leq u_t \leq b_u^U \quad \text{for } t \in\{1,\dots, N-1\},
 \end{array}
 ```
-where $\mathbf{x} = (x_1, \dots, x_{N})$ is the state trajectory and $\mathbf{u} = (u_1, \dots, u_{N})$ is the control trajectory. Equality, inequality, and control-bound definitions use `EqualityConstraints`, `InequalityConstraints`, and `ControlLimits`, respectively.
+where $\mathbf{x} = (x_1, \dots, x_N)$ is the state trajectory and $\mathbf{u} = (u_1, \dots, u_{N-1})$ is the control trajectory. Equality, inequality, and control-bound definitions use `EqualityConstraints`, `InequalityConstraints`, and `ControlLimits`, respectively.
 - All derivatives, including Jacobians and Hessians are automatically generated using [Symbolics.jl](https://github.com/JuliaSymbolics/Symbolics.jl) for user-provided costs/objectives, constraints, and dynamics.
 
 - Linear algebra is implemented using statically-typed arrays through [StaticArrays.jl](https://github.com/JuliaArrays/StaticArrays.jl). This yields extremely fast solve times for sufficiently small problem sizes (with respect to number of controls, states and constraints).
@@ -50,15 +50,15 @@ The default is `nlp_scaling=false`, though consider turning it on if you run int
 
 ## Fixed OCP Parameters
 
-Coefficients that vary between OCP instances but are not decision variables can be passed through statically sized parameter vectors. Parameterized objectives, dynamics, and constraints accept `(x, u, p)`, with the parameter dimension supplied as the final constructor argument. Derivatives are generated only with respect to `x` and `u`.
+Coefficients that vary between OCP instances but are not decision variables can be passed through statically sized parameter vectors. Parameterized stage objectives, dynamics, and constraints accept `(x, u, p)`, while terminal objectives accept `(x, p)`. The parameter dimension is supplied as the final constructor argument, and derivatives are not taken with respect to the parameters.
 
 ```julia
 npo = 1
 npd = 1
 stage_objective = Objective(
     (x, u, p) -> p[1] * dot(u, u), nx, nu, npo)
-terminal_objective = Objective(
-    (x, u, p) -> p[1] * dot(x - xN, x - xN), nx, nu, npo)
+terminal_objective = TerminalObjective(
+    (x, p) -> p[1] * dot(x - xN, x - xN), nx, npo)
 dynamics = Dynamics(
     (x, u, p) -> x + p[1] * u, nx, nu, npd)
 
@@ -72,6 +72,8 @@ parameters = OCPParameters(
 ocp = build_ocp(N, stage_objective, terminal_objective, dynamics,
     equalities, inequalities, control_limits; parameters=parameters)
 ```
+
+The horizon contains `N` state knots and `N-1` control stages. Stage objectives, dynamics, constraints, slacks, and feedback policies are defined for `t = 1:N-1`; the state-only terminal objective is evaluated at `x[N]`. Accordingly, `solve!` accepts `N-1` initial controls and `get_trajectory` returns `N` states and `N-1` controls.
 
 ## Unconstrained (and Bound Constrained) Differential Dynamic Programming
 
@@ -130,9 +132,9 @@ dyn = Dynamics(f, nx, nu)
 
 xN = [1.0, 0.0]
 l = (x, u) -> 0.01 * (2.0 * u[2] - u[1] * x[2])
-lN = (x, u) -> 500.0 * (x - xN)' * (x - xN)
+lN = x -> 500.0 * (x - xN)' * (x - xN)
 stage_obj = Objective(l, nx, nu)
-term_obj = Objective(lN, nx, nu)
+term_obj = TerminalObjective(lN, nx)
 
 # ## Define constraint functions
 
@@ -159,7 +161,7 @@ solver = Solver(ocp; options=options)
 
 # ## Initialise trajectories solve OCP
 
-ū = [SVector{nu, Float64}([0.01; 0.01]) for k = 1:N]
+ū = [SVector{nu, Float64}([0.01; 0.01]) for k = 1:N-1]
 solve!(solver, x1, ū)
 
 # ## Recover solution trajectories post-solve
