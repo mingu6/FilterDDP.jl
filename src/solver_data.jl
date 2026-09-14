@@ -17,6 +17,7 @@ mutable struct SolverData{T}
     reg_last::T                   # regularisation in backward pass
     objective::T                  # objective function value of current iterate
     primal_inf::T                 # ∞-norm of constraint violation (primal infeasibility)
+    primal_inf_raw::T             # unscaled ∞-norm of constraint violation
     dual_inf::T                   # ∞-norm of gradient of Lagrangian (dual infeasibility)
     cs_inf_0::T                   # ∞-norm of complementary slackness error
     cs_inf_μ::T                   # ∞-norm of perturbed complementary slackness error
@@ -43,6 +44,7 @@ function solver_data(T)
     reg_last = T(0.0)
     objective = T(0.0)
     primal_inf = T(0.0)
+    primal_inf_raw = T(0.0)
     dual_inf = T(0.0)
     cs_inf_0 = T(0.0)
     cs_inf_μ = T(0.0)
@@ -57,7 +59,7 @@ function solver_data(T)
     filter = [[T(0.0) , T(0.0)]]
 
     SolverData(max_primal_1, min_primal_1, step_size, status, j, k, l, 
-        μ, reg_last, objective, primal_inf, dual_inf, cs_inf_0, cs_inf_μ, 
+        μ, reg_last, objective, primal_inf, primal_inf_raw, dual_inf, cs_inf_0, cs_inf_μ,
         barrier_lagrangian_curr, primal_1_curr, barrier_lagrangian_next, primal_1_next, expected_change_L,
         update_filter, switching, armijo_passed, filter)
 end
@@ -74,6 +76,7 @@ function reset!(data::SolverData{T}) where T
     data.reg_last = 0.0
     data.objective = 0.0
     data.primal_inf = 0.0
+    data.primal_inf_raw = 0.0
     data.dual_inf = 0.0
     data.cs_inf_0 = 0.0
     data.cs_inf_μ = 0.0

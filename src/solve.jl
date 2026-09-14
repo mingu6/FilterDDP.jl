@@ -14,8 +14,11 @@ function solve!(solver::Solver)
     
     reset!(data)
     reset_filter!(data)
+    previous_objective_scale = solver.scaling.objective
+    compute_nlp_scaling!(solver)
+    rescale_duals!(solver, solver.scaling.objective / previous_objective_scale)
 
-    data.μ = options.μ_init
+    data.μ = solver.scaling.objective * options.μ_init
     ni = (ocp.control_limits.nl + ocp.control_limits.nu +
         ocp.inequality_constraints.bounds.nl +
         ocp.inequality_constraints.bounds.nu) * ocp.N

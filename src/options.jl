@@ -25,6 +25,8 @@ Base.@kwdef mutable struct Options{T}
     θ_μ::T = 1.2                   # superlinear decrease factor for barrier parameter
     τ_min::T = 0.99                # lower bound on fraction-to-boundary parameter
     
+    nlp_scaling::Bool = false      # scale large objective/constraint gradients at the initial point
+    nlp_scaling_max_gradient::T = 100.0
     s_max::T = 100.0               # scaling threshold for NLP error
     η_L::T = 1e-4                  # relaxation factor in the armijo condition
     s_L::T = 2.3                   # exponent for linear barrier function model in switching rule

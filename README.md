@@ -36,6 +36,18 @@ g(x_t,u_t)-s_t=0, \qquad b_g^L \leq s_t \leq b_g^U.
 
 The slacks are not appended to the user control. Objectives and dynamics continue to receive only `(x, u)`, while `get_slack_trajectory` and `get_slack_feedback` expose the internal slack solution and policy. For maximum performance, control and slack bounds are eliminated in the stage-wise KKT systems.
 
+## Automatic NLP Scaling
+
+FilterDDP provides conservative gradient-based scaling as an opt-in solver option. After the initial trajectory is constructed, the objective and each algebraic constraint row whose gradient infinity norm exceeds `nlp_scaling_max_gradient` are scaled down. The default threshold is `100.0`, following IPOPT's gradient-based scaling rule. Dynamics are not explicitly scaled because they are eliminated by the forward rollout.
+
+```julia
+options = Options{Float64}(
+    nlp_scaling=true,
+    nlp_scaling_max_gradient=100.0)
+```
+
+The default `nlp_scaling=false` preserves the original algorithm. When scaling is enabled, `solver.data.primal_inf` is the scaled infeasibility used by the stopping test; `solver.data.primal_inf_raw` retains the maximum constraint violation in the problem's original units. The reported objective remains in its original units.
+
 ## Unconstrained (and Bound Constrained) Differential Dynamic Programming
 
 FilterDDP.jl also provides an efficient Julia implmentation of both the unconstrained DDP algorithm by Mayne et al. (1970) and the Interior Point DDP (IPDDP) algorithm by [Pavlov et al. (2021)](https://ieeexplore.ieee.org/document/9332234) specialised to control limits only. The unconstrained DDP algorithm is applied when neither equality nor inequality constraints are added and IPDDP is applied when only control limits are added. In both cases, the dynamics dual variable as defined by (8) and (13) in the FilterDDP paper are replaced with the value function gradient $\bar{V}_x^t$ due to improved numerical performance overall.

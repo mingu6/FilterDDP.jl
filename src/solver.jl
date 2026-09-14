@@ -67,6 +67,19 @@ function UpdateRule(T::T_, nx::Int, nu::Int, nh::Int, ng::Int) where T_
     )
 end
 
+mutable struct NLPScaling{T, nh, ng}
+    objective::T
+    equality::Vector{SVector{nh, T}}
+    inequality::Vector{SVector{ng, T}}
+end
+
+function NLPScaling(::Type{T}, N::Int, nh::Int, ng::Int) where T
+    return NLPScaling(
+        one(T),
+        [SVector{nh, T}(ones(T, nh)) for _ = 1:N],
+        [SVector{ng, T}(ones(T, ng)) for _ = 1:N])
+end
+
 struct Solver{T, nx, nu, nh, ng, nux, nhx, ngx, O}
     ocp::O
     nominal::Vector{TrajectoryElement{T, nx, nu, nh, ng}}
@@ -74,6 +87,7 @@ struct Solver{T, nx, nu, nh, ng, nux, nhx, ngx, O}
     update::Vector{UpdateRule{T, nx, nu, nh, ng, nux, nhx, ngx}}
 	data::SolverData{T}
     options::Options{T}
+    scaling::NLPScaling{T, nh, ng}
 end
 
 function Solver(ocp::OCP{T, nx, nu, nh, ng};
@@ -83,7 +97,8 @@ function Solver(ocp::OCP{T, nx, nu, nh, ng};
     update = [UpdateRule(T, nx, nu, nh, ng) for _ = 1:ocp.N]
     data = solver_data(T)
     options = isnothing(options) ? Options{T}() : options
-	return Solver(ocp, nominal, current, update, data, options)
+    scaling = NLPScaling(T, ocp.N, nh, ng)
+	return Solver(ocp, nominal, current, update, data, options, scaling)
 end
 
 function get_trajectory(solver::Solver)
@@ -129,10 +144,10 @@ function initialize_trajectory!(solver::Solver{T, nx, nu, nh, ng},
             s̄t, slack_bounds, options.κ_1, options.κ_2)
         ϕ = @SVector zeros(T, nh)
         ν = @SVector zeros(T, ng)
-        zl = SVector{nu, T}(control_limits.maskl)
-        zu = SVector{nu, T}(control_limits.masku)
-        zsl = SVector{ng, T}(slack_bounds.maskl)
-        zsu = SVector{ng, T}(slack_bounds.masku)
+        zl = options.ineq_dual_init .* SVector{nu, T}(control_limits.maskl)
+        zu = options.ineq_dual_init .* SVector{nu, T}(control_limits.masku)
+        zsl = options.ineq_dual_init .* SVector{ng, T}(slack_bounds.maskl)
+        zsu = options.ineq_dual_init .* SVector{ng, T}(slack_bounds.masku)
 
         solver.nominal[t] = TrajectoryElement(x, ūt, s, ϕ, ν, zl, zu, zsl, zsu)
         
@@ -140,6 +155,76 @@ function initialize_trajectory!(solver::Solver{T, nx, nu, nh, ng},
             x = solver.ocp.dynamics.f(x, ūt)
         end
     end
+    compute_nlp_scaling!(solver)
+    dual_scale = solver.scaling.objective
+    if dual_scale != one(T)
+        for t = 1:solver.ocp.N
+            element = solver.nominal[t]
+            solver.nominal[t] = TrajectoryElement(
+                element.x, element.u, element.s, element.ϕ, element.ν,
+                dual_scale .* element.zl, dual_scale .* element.zu,
+                dual_scale .* element.zsl, dual_scale .* element.zsu)
+        end
+    end
+end
+
+@inline function gradient_scale(max_gradient::T, gradient_norm::T) where T
+    return iszero(gradient_norm) ? one(T) : min(one(T), max_gradient / gradient_norm)
+end
+
+function compute_nlp_scaling!(solver::Solver{T, nx, nu, nh, ng}) where {T, nx, nu, nh, ng}
+    scaling = solver.scaling
+    options = solver.options
+    max_gradient = options.nlp_scaling_max_gradient
+    max_gradient > zero(T) || throw(ArgumentError("nlp_scaling_max_gradient must be positive"))
+
+    scaling.objective = one(T)
+    fill!(scaling.equality, SVector{nh, T}(ones(T, nh)))
+    fill!(scaling.inequality, SVector{ng, T}(ones(T, ng)))
+    options.nlp_scaling || return nothing
+
+    objective_gradient_norm = zero(T)
+    for t = 1:solver.ocp.N
+        element = solver.nominal[t]
+        objective = t == solver.ocp.N ? solver.ocp.term_objective : solver.ocp.stage_objective
+        objective_gradient_norm = max(
+            objective_gradient_norm,
+            norm(objective.lx(element.x, element.u), Inf),
+            norm(objective.lu(element.x, element.u), Inf))
+
+        if nh > 0
+            hx = solver.ocp.equality_constraints.hx(element.x, element.u)
+            hu = solver.ocp.equality_constraints.hu(element.x, element.u)
+            scaling.equality[t] = SVector{nh, T}(ntuple(Val(nh)) do index
+                gradient_norm = max(norm(hx[index, :], Inf), norm(hu[index, :], Inf))
+                gradient_scale(max_gradient, gradient_norm)
+            end)
+        end
+
+        if ng > 0
+            gx = solver.ocp.inequality_constraints.gx(element.x, element.u)
+            gu = solver.ocp.inequality_constraints.gu(element.x, element.u)
+            scaling.inequality[t] = SVector{ng, T}(ntuple(Val(ng)) do index
+                gradient_norm = max(one(T), norm(gx[index, :], Inf), norm(gu[index, :], Inf))
+                gradient_scale(max_gradient, gradient_norm)
+            end)
+        end
+    end
+    scaling.objective = gradient_scale(max_gradient, objective_gradient_norm)
+    return nothing
+end
+
+function rescale_duals!(solver::Solver{T}, scale::T) where T
+    scale == one(T) && return nothing
+    for t = 1:solver.ocp.N
+        element = solver.nominal[t]
+        solver.nominal[t] = TrajectoryElement(
+            element.x, element.u, element.s,
+            scale .* element.ϕ, scale .* element.ν,
+            scale .* element.zl, scale .* element.zu,
+            scale .* element.zsl, scale .* element.zsu)
+    end
+    return nothing
 end
 
 function update_nominal_trajectory!(solver::Solver)

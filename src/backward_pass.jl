@@ -27,10 +27,14 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
     dynamics = ocp.dynamics
     control_limits = ocp.control_limits
     slack_bounds = inequalities.bounds
+    objective_scale = solver.scaling.objective
+    reg_1 = objective_scale * options.reg_1
+    reg_min = objective_scale * options.reg_min
+    reg_max = objective_scale * options.reg_max
     ni = (control_limits.nl + control_limits.nu +
         slack_bounds.nl + slack_bounds.nu) * ocp.N
     
-    while reg <= options.reg_max
+    while reg <= reg_max
         data.status = 0
         V̂x = @SVector zeros(T, nx)
         V̂xx = @SMatrix zeros(T, nx, nx)
@@ -39,6 +43,7 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
         data.barrier_lagrangian_curr = T(0.0)
         data.primal_1_curr = T(0.0)
         data.primal_inf = T(0.0)
+        data.primal_inf_raw = T(0.0)
         data.cs_inf_μ = T(0.0)
         data.cs_inf_0 = T(0.0)
         data.objective = T(0.0)
@@ -57,18 +62,18 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
             # evaluate derivatives
 
             if t == ocp.N
-                lx = ocp.term_objective.lx(x, u)
-                lu_ = ocp.term_objective.lu(x, u)
-                lxx = ocp.term_objective.lxx(x, u)
-                lux = ocp.term_objective.lux(x, u)
-                luu = ocp.term_objective.luu(x, u)
+                lx = objective_scale .* ocp.term_objective.lx(x, u)
+                lu_ = objective_scale .* ocp.term_objective.lu(x, u)
+                lxx = objective_scale .* ocp.term_objective.lxx(x, u)
+                lux = objective_scale .* ocp.term_objective.lux(x, u)
+                luu = objective_scale .* ocp.term_objective.luu(x, u)
                 data.objective += ocp.term_objective.l(x, u)[1]
             else
-                lx = ocp.stage_objective.lx(x, u)
-                lu_ = ocp.stage_objective.lu(x, u)
-                lxx = ocp.stage_objective.lxx(x, u)
-                lux = ocp.stage_objective.lux(x, u)
-                luu = ocp.stage_objective.luu(x, u)
+                lx = objective_scale .* ocp.stage_objective.lx(x, u)
+                lu_ = objective_scale .* ocp.stage_objective.lu(x, u)
+                lxx = objective_scale .* ocp.stage_objective.lxx(x, u)
+                lux = objective_scale .* ocp.stage_objective.lux(x, u)
+                luu = objective_scale .* ocp.stage_objective.luu(x, u)
                 data.objective += ocp.stage_objective.l(x, u)[1]
             end
             
@@ -79,10 +84,14 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
                 hxx = equalities.hxx(x, u, ϕ)
                 hux = equalities.hux(x, u, ϕ)
                 huu = equalities.huu(x, u, ϕ)
+                h_scale = solver.scaling.equality[t]
+                h_diagonal = diagm(h_scale)
+                h_scaled = h_scale .* h
                 
                 # evaluate constraint violation norms
-                data.primal_1_curr += norm(h, 1)
-                data.primal_inf = max(data.primal_inf, norm(h, Inf))
+                data.primal_1_curr += norm(h_scaled, 1)
+                data.primal_inf = max(data.primal_inf, norm(h_scaled, Inf))
+                data.primal_inf_raw = max(data.primal_inf_raw, norm(h, Inf))
             end
 
             if ng > 0
@@ -93,9 +102,12 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
                 gux = inequalities.gux(x, u, ν)
                 guu = inequalities.guu(x, u, ν)
                 q = g - s
+                g_scale = solver.scaling.inequality[t]
+                q_scaled = g_scale .* q
 
-                data.primal_1_curr += norm(q, 1)
-                data.primal_inf = max(data.primal_inf, norm(q, Inf))
+                data.primal_1_curr += norm(q_scaled, 1)
+                data.primal_inf = max(data.primal_inf, norm(q_scaled, Inf))
+                data.primal_inf_raw = max(data.primal_inf_raw, norm(q, Inf))
             end
 
             fx = dynamics.fx(x, u)
@@ -220,7 +232,9 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
 
             # factorise the equality-only KKT system using the nullspace method
             if nh > 0
-                A = hu'
+                hu_scaled = h_diagonal * hu
+                hx_scaled = h_diagonal * hx
+                A = hu_scaled'
                 z = @SMatrix zeros(T, nu, nu-nh)
                 Q, R = qr([A z])
                 Y = Q[:, SVector{nh, Int64}(1:nh)]
@@ -228,7 +242,7 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
                 
                 AY = A' * Y
                 fk = lu(AY)
-                α_β_y = fk \ [-h -hx]
+                α_β_y = fk \ [-h_scaled -hx_scaled]
 
                 M = Symmetric(Z' * Hsolve * Z)
                 ck = cholesky(M; check=false)
@@ -239,7 +253,7 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
             
             if data.status == 1
                 if iszero(reg) # initial setting of regularisation
-                    reg = (data.reg_last == 0.0) ? options.reg_1 : max(options.reg_min, options.κ_w_m * data.reg_last)
+                    reg = (data.reg_last == 0.0) ? reg_1 : max(reg_min, options.κ_w_m * data.reg_last)
                 else
                     reg = (data.reg_last == 0.0) ? options.κ_̄w_p * reg : options.κ_w_p * reg
                 end
@@ -251,9 +265,11 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
                     ck \ (Z' * (rhs_u_solve - Hsolve * Y * α_β_y)) :
                     ck \ (Z' * ([-Qû -B] - Ĥ * Y * α_β_y))
                 α_β = Y * α_β_y + Z * α_β_z
-                ψh_ωh = ng > 0 ?
+                ψh_ωh_scaled = ng > 0 ?
                     ((Y' * (rhs_u_solve - Hsolve * α_β))' / fk)' :
                     ((Y' * ([-Qû -B] - Ĥ * α_β))' / fk)'
+                # Store physical coefficients so dot(h, ϕ) and derivative terms stay unchanged.
+                ψh_ωh = h_diagonal * ψh_ωh_scaled
             else
                 α_β = ng > 0 ? ck \ rhs_u_solve : ck \ [-Qû -B]
                 ψh_ωh = @SMatrix zeros(T, nh, nx + 1)
@@ -316,8 +332,8 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
             z_norm += sum(zu)
             z_norm += sum(zsl)
             z_norm += sum(zsu)
-            ϕ_norm += norm(ϕ, 1)
-            ng > 0 && (ϕ_norm += norm(ν, 1))
+            nh > 0 && (ϕ_norm += norm(ϕ ./ h_scale, 1))
+            ng > 0 && (ϕ_norm += norm(ν ./ g_scale, 1))
 
             # Update return V derivatives for the next timestep.
             V̂xx = C + β' * B
@@ -349,7 +365,7 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
         data.dual_inf /= scaling_dual
         data.cs_inf_0 /= scaling_cs
         data.cs_inf_μ /= scaling_cs
-        data.barrier_lagrangian_curr += data.objective
+        data.barrier_lagrangian_curr += objective_scale * data.objective
         data.status == 0 && break
     end
     data.reg_last = reg
