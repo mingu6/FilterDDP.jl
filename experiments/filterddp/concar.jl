@@ -17,7 +17,7 @@ r_car = 0.02
 n_ocp = 100
 
 const nx::Int64 = 4
-const nu::Int64 = 10
+const nu::Int64 = 6
 
 visualise && include("../visualise/concar.jl")
 
@@ -86,27 +86,29 @@ for seed = 1:n_ocp
         xy_diff = x2d - obs_xy
         return dot(xy_diff, xy_diff)
     end
-    c = (x, u) -> begin
+    g = (x, u) -> begin
     [
-        # obstacle avoidance constraints w/slack variable,
-        # i.e., d_obs^2 - d_thresh^2 >= 0 and d_obs^2 - d_thresh^2 + s = 0, s >= 0
-        [(obs[3] + r_car)^2 - obs_dist(obs[1:2])(x, u) - u[2+i] + u[2+no+i] 
+        # Penalized violation u[2+i] softens obstacle avoidance.
+        [(obs[3] + r_car)^2 - obs_dist(obs[1:2])(x, u) - u[2+i]
             for (i, obs) in enumerate(xyr_obs)];
     ]
     end
-    constraints = EqualityConstraints(c, nx, nu)
+    equalities = EqualityConstraints(nx, nu)
+    inequalities = InequalityConstraints(g, nx, nu,
+        SVector{no, T}(-Inf * ones(T, no)), SVector{no, T}(zeros(T, no)))
 
     # ## Control Limits
 
-    # [control limits; obs slack; bound slack]
-    cl = ControlLimits(
-        SVector{nu, T}([ul; zeros(T, no); zeros(T, no)]),
-        SVector{nu, T}([uu; T(Inf) * ones(T, no); T(Inf) * ones(T, no)])
+    # [control limits; penalized obstacle violation]
+    control_limits = ControlLimits(
+        SVector{nu, T}([ul; zeros(T, no)]),
+        SVector{nu, T}([uu; T(Inf) * ones(T, no)])
     )
 
     # ## Initialise solver and solve
     
-    ocp = build_ocp(N, stage_obj, term_obj, dyn, constraints, cl)
+    ocp = build_ocp(N, stage_obj, term_obj, dyn,
+        equalities, inequalities, control_limits)
     solver = Solver(ocp; options=options)
     solver.options.verbose = verbose
 
@@ -121,7 +123,7 @@ for seed = 1:n_ocp
     end
     
     x1 = SVector{nx, T}(T[0.0; 0.0; π / 8; 0.0] + rand(T, nx) .* T[0.0; 0.0; π / 4; 0.0])
-    ū = [SVector{nu, T}([zeros(T, 2); T(1e-2) * ones(T, 2 * no)]) for k = 1:N]
+    ū = [SVector{nu, T}([zeros(T, 2); T(1e-2) * ones(T, no)]) for k = 1:N]
 
     solve!(solver, x1, ū)
     

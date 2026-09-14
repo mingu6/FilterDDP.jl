@@ -1,15 +1,34 @@
-function backward_pass!(solver::Solver{T, nx, nu, nc, nux, ncx}, ocp::OCP{T, nx, nu, nc},
-            traj::Vector{TrajectoryElement{T, nx, nu, nc}}, data::SolverData{T}, options::Options{T}; verbose::Bool=false
-            ) where {T, nx, nu, nc, nux, ncx}
+@inline function eliminate_slack_blocks(H, G, slack_curvature,
+        rhs_u, rhs_s, rhs_g)
+    H_reduced = Symmetric(H + G' * slack_curvature * G)
+    rhs_reduced = rhs_u + G' * (rhs_s + slack_curvature * rhs_g)
+    return H_reduced, rhs_reduced
+end
+
+@inline function recover_slack_blocks(step_u, G, slack_curvature,
+        rhs_s, rhs_g)
+    step_s = G * step_u - rhs_g
+    step_multiplier = slack_curvature * step_s - rhs_s
+    return step_s, step_multiplier
+end
+
+function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
+            ocp::OCP{T, nx, nu, nh, ng},
+            traj::Vector{TrajectoryElement{T, nx, nu, nh, ng}},
+            data::SolverData{T}, options::Options{T}; verbose::Bool=false
+            ) where {T, nx, nu, nh, ng, nux, nhx, ngx}
     reg::T = 0.0
     μ = data.μ
     δ_c = 0.
     reg = 0.0
 
-    constraints = ocp.constraints
+    equalities = ocp.equality_constraints
+    inequalities = ocp.inequality_constraints
     dynamics = ocp.dynamics
-    cl = ocp.control_limits
-    ni = (cl.nl + cl.nu) * ocp.N
+    control_limits = ocp.control_limits
+    slack_bounds = inequalities.bounds
+    ni = (control_limits.nl + control_limits.nu +
+        slack_bounds.nl + slack_bounds.nu) * ocp.N
     
     while reg <= options.reg_max
         data.status = 0
@@ -29,7 +48,11 @@ function backward_pass!(solver::Solver{T, nx, nu, nc, nux, ncx}, ocp::OCP{T, nx,
         z_norm = T(0.0) 
         
         for t = ocp.N:-1:1
-            x, u, ϕ, zl, zu = traj[t].x, traj[t].u, traj[t].ϕ, traj[t].zl, traj[t].zu
+            element = traj[t]
+            x, u, s = element.x, element.u, element.s
+            ϕ, ν = element.ϕ, element.ν
+            zl, zu = element.zl, element.zu
+            zsl, zsu = element.zsl, element.zsu
 
             # evaluate derivatives
 
@@ -49,44 +72,96 @@ function backward_pass!(solver::Solver{T, nx, nu, nc, nux, ncx}, ocp::OCP{T, nx,
                 data.objective += ocp.stage_objective.l(x, u)[1]
             end
             
-            if nc > 0
-                c = constraints.c(x, u)
-                cx = constraints.cx(x, u)
-                cu = constraints.cu(x, u)
-                cxx = constraints.cxx(x, u, ϕ)
-                cux = constraints.cux(x, u, ϕ)
-                cuu = constraints.cuu(x, u, ϕ)
+            if nh > 0
+                h = equalities.h(x, u)
+                hx = equalities.hx(x, u)
+                hu = equalities.hu(x, u)
+                hxx = equalities.hxx(x, u, ϕ)
+                hux = equalities.hux(x, u, ϕ)
+                huu = equalities.huu(x, u, ϕ)
                 
                 # evaluate constraint violation norms
-                data.primal_1_curr += norm(c, 1)
-                data.primal_inf = max(data.primal_inf, norm(c, Inf))
+                data.primal_1_curr += norm(h, 1)
+                data.primal_inf = max(data.primal_inf, norm(h, Inf))
+            end
+
+            if ng > 0
+                g = inequalities.g(x, u)
+                gx = inequalities.gx(x, u)
+                gu = inequalities.gu(x, u)
+                gxx = inequalities.gxx(x, u, ν)
+                gux = inequalities.gux(x, u, ν)
+                guu = inequalities.guu(x, u, ν)
+                q = g - s
+
+                data.primal_1_curr += norm(q, 1)
+                data.primal_inf = max(data.primal_inf, norm(q, Inf))
             end
 
             fx = dynamics.fx(x, u)
             fu = dynamics.fu(x, u)
-            fxx = nc == 0 ? dynamics.fxx(x, u, V̂x) : dynamics.fxx(x, u, λ)
-            fux = nc == 0 ? dynamics.fux(x, u, V̂x) : dynamics.fux(x, u, λ)
-            fuu = nc == 0 ? dynamics.fuu(x, u, V̂x) : dynamics.fuu(x, u, λ)
+            unconstrained = nh == 0 && ng == 0
+            fxx = unconstrained ? dynamics.fxx(x, u, V̂x) : dynamics.fxx(x, u, λ)
+            fux = unconstrained ? dynamics.fux(x, u, V̂x) : dynamics.fux(x, u, λ)
+            fuu = unconstrained ? dynamics.fuu(x, u, V̂x) : dynamics.fuu(x, u, λ)
 
             # evaluate barrier Lagrangian
 
-            ul = u - cl.l
-            uu = cl.u - u
-            data.barrier_lagrangian_curr -= μ* (dot(log.(ul), cl.maskl) + dot(log.(uu), cl.masku))
+            ul = u - control_limits.l
+            uu = control_limits.u - u
+            data.barrier_lagrangian_curr -= μ *
+                (dot(log.(ul), control_limits.maskl) +
+                dot(log.(uu), control_limits.masku))
+
+            if ng > 0
+                sl = s - slack_bounds.l
+                su = slack_bounds.u - s
+                data.barrier_lagrangian_curr -= μ *
+                    (dot(log.(sl), slack_bounds.maskl) +
+                    dot(log.(su), slack_bounds.masku))
+            else
+                sl = @SVector zeros(T, ng)
+                su = @SVector zeros(T, ng)
+            end
 
             # evaluate complementary slackness errors
             cs_l = ul .* zl
             cs_u = uu .* zu
-            data.cs_inf_0 = max(data.cs_inf_0, norm(cs_l .* cl.maskl, Inf))
-            data.cs_inf_μ = max(data.cs_inf_μ, norm((cs_l .- μ).* cl.maskl, Inf))
-            data.cs_inf_0 = max(data.cs_inf_0, norm(cs_u .* cl.masku, Inf))
-            data.cs_inf_μ = max(data.cs_inf_μ, norm((cs_u .- μ) .* cl.masku, Inf))
+            data.cs_inf_0 = max(data.cs_inf_0,
+                norm(cs_l .* control_limits.maskl, Inf))
+            data.cs_inf_μ = max(data.cs_inf_μ,
+                norm((cs_l .- μ) .* control_limits.maskl, Inf))
+            data.cs_inf_0 = max(data.cs_inf_0,
+                norm(cs_u .* control_limits.masku, Inf))
+            data.cs_inf_μ = max(data.cs_inf_μ,
+                norm((cs_u .- μ) .* control_limits.masku, Inf))
 
-            inv_ul = inv.(ul) .* cl.maskl
-            inv_uu = inv.(uu) .* cl.masku
+            if ng > 0
+                cs_sl = sl .* zsl
+                cs_su = su .* zsu
+                data.cs_inf_0 = max(data.cs_inf_0,
+                    norm(cs_sl .* slack_bounds.maskl, Inf))
+                data.cs_inf_μ = max(data.cs_inf_μ,
+                    norm((cs_sl .- μ) .* slack_bounds.maskl, Inf))
+                data.cs_inf_0 = max(data.cs_inf_0,
+                    norm(cs_su .* slack_bounds.masku, Inf))
+                data.cs_inf_μ = max(data.cs_inf_μ,
+                    norm((cs_su .- μ) .* slack_bounds.masku, Inf))
+            end
+
+            inv_ul = inv.(ul) .* control_limits.maskl
+            inv_uu = inv.(uu) .* control_limits.masku
+            if ng > 0
+                inv_sl = inv.(sl) .* slack_bounds.maskl
+                inv_su = inv.(su) .* slack_bounds.masku
+            else
+                inv_sl = @SVector zeros(T, ng)
+                inv_su = @SVector zeros(T, ng)
+            end
 
             # Qû = Lu' -μŪ^{-1}e + fu' * V̂x
             Qû = lu_ + fu' * V̂x + μ .* (inv_uu - inv_ul)
+            Qŝ = ng > 0 ? -ν + μ .* (inv_su - inv_sl) : @SVector zeros(T, ng)
             
             # C = Lxx + fx' * Vxx * fx + V̄x ⋅ fxx
             C = lxx + fx' * V̂xx * fx + fxx
@@ -95,17 +170,34 @@ function backward_pass!(solver::Solver{T, nx, nu, nc, nux, ncx}, ocp::OCP{T, nx,
             # Ĥ = Luu + Σ + fu' * Vxx * fu + V̄x ⋅ fuu
             Σ_L = inv_ul .* zl
             Σ_U = inv_uu .* zu
+            if ng > 0
+                Σs_L = inv_sl .* zsl
+                Σs_U = inv_su .* zsu
+                Σs = Σs_L + Σs_U
+            else
+                Σs_L = @SVector zeros(T, ng)
+                Σs_U = @SVector zeros(T, ng)
+                Σs = @SVector zeros(T, ng)
+            end
             Ĥ = luu + diagm(Σ_L) + diagm(Σ_U) + ux_tmp * fu + fuu
     
             # B = Lux + fu' * Vxx * fx + V̄x ⋅ fux
             B = lux + ux_tmp * fx + fux
 
-            if nc > 0
-                data.barrier_lagrangian_curr += dot(c, ϕ)
-                Qû = Qû + cu' * ϕ
-                C = C + cxx
-                Ĥ = Ĥ + cuu
-                B = B + cux
+            if nh > 0
+                data.barrier_lagrangian_curr += dot(h, ϕ)
+                Qû = Qû + hu' * ϕ
+                C = C + hxx
+                Ĥ = Ĥ + huu
+                B = B + hux
+            end
+
+            if ng > 0
+                data.barrier_lagrangian_curr += dot(q, ν)
+                Qû = Qû + gu' * ν
+                C = C + gxx
+                Ĥ = Ĥ + guu
+                B = B + gux
             end
             
             # inertia correction / regularisation
@@ -113,23 +205,35 @@ function backward_pass!(solver::Solver{T, nx, nu, nc, nux, ncx}, ocp::OCP{T, nx,
             reg_diag = reg_diag .* reg
             Ĥ = Ĥ + diagm(reg_diag)
 
-            # factorise KKT system using nullspace method
-            if nc > 0
-                A = cu'
-                z = @SMatrix zeros(T, nu, nu-nc)
+            rhs_u = [-Qû -B]
+            if ng > 0
+                rhs_s = hcat(-Qŝ, @SMatrix zeros(T, ng, nx))
+                rhs_g = [-q -gx]
+                slack_curvature = diagm(Σs)
+                Hsolve, rhs_u_solve = eliminate_slack_blocks(
+                    Ĥ, gu, slack_curvature, rhs_u, rhs_s, rhs_g)
+            else
+                Hsolve = Symmetric(Ĥ)
+                nh > 0 && (Ĥ = Hsolve)
+                rhs_u_solve = rhs_u
+            end
+
+            # factorise the equality-only KKT system using the nullspace method
+            if nh > 0
+                A = hu'
+                z = @SMatrix zeros(T, nu, nu-nh)
                 Q, R = qr([A z])
-                Y = Q[:, SVector{nc, Int64}(1:nc)]
-                Z = Q[:, SVector{nu-nc, Int64}(nc+1:nu)]
+                Y = Q[:, SVector{nh, Int64}(1:nh)]
+                Z = Q[:, SVector{nu-nh, Int64}(nh+1:nu)]
                 
                 AY = A' * Y
                 fk = lu(AY)
-                α_β_y = fk \ [-c -cx]
+                α_β_y = fk \ [-h -hx]
 
-                Ĥ = Symmetric(Ĥ)
-                M = Symmetric(Z' * Ĥ * Z)
+                M = Symmetric(Z' * Hsolve * Z)
                 ck = cholesky(M; check=false)
             else
-                ck = cholesky(Symmetric(Ĥ); check=false)
+                ck = cholesky(Hsolve; check=false)
             end
             ck.info != 0 && (data.status = 1)
             
@@ -142,60 +246,105 @@ function backward_pass!(solver::Solver{T, nx, nu, nc, nux, ncx}, ocp::OCP{T, nx,
                 break
             end
 
-            if nc > 0
-                α_β_z = ck \ (Z' * ([-Qû -B] - Ĥ * Y * α_β_y))
+            if nh > 0
+                α_β_z = ng > 0 ?
+                    ck \ (Z' * (rhs_u_solve - Hsolve * Y * α_β_y)) :
+                    ck \ (Z' * ([-Qû -B] - Ĥ * Y * α_β_y))
                 α_β = Y * α_β_y + Z * α_β_z
-                α = α_β[:, 1]
-                β = α_β[:, SVector{nx, Int64}(2:nx+1)]
-
-                ψ_ω = ((Y' * ([-Qû -B] - Ĥ * α_β))' / fk)'
-                ψ = ψ_ω[:, 1]
-                ω = ψ_ω[:, SVector{nx, Int64}(2:nx+1)]
+                ψh_ωh = ng > 0 ?
+                    ((Y' * (rhs_u_solve - Hsolve * α_β))' / fk)' :
+                    ((Y' * ([-Qû -B] - Ĥ * α_β))' / fk)'
             else
-                α_β = ck \ [-Qû -B]
-                α = α_β[:, 1]
-                β = α_β[:, SVector{nx, Int64}(2:nx+1)]
-                ψ = @SVector zeros(T, nc)
-                ω = @SMatrix zeros(T, nc, nx)
+                α_β = ng > 0 ? ck \ rhs_u_solve : ck \ [-Qû -B]
+                ψh_ωh = @SMatrix zeros(T, nh, nx + 1)
             end
 
-            # update parameters of update rule for ineq. dual variables
+            if ng > 0
+                αs_βs, ψg_ωg = recover_slack_blocks(
+                    α_β, gu, slack_curvature, rhs_s, rhs_g)
+            else
+                αs_βs = @SMatrix zeros(T, ng, nx + 1)
+                ψg_ωg = @SMatrix zeros(T, ng, nx + 1)
+            end
 
-            ζl =  -β .* Σ_L
+            α = α_β[:, 1]
+            β = α_β[:, SVector{nx, Int64}(2:nx+1)]
+            αs = αs_βs[:, 1]
+            βs = αs_βs[:, SVector{nx, Int64}(2:nx+1)]
+            ψh = ψh_ωh[:, 1]
+            ωh = ψh_ωh[:, SVector{nx, Int64}(2:nx+1)]
+            ψg = ψg_ωg[:, 1]
+            ωg = ψg_ωg[:, SVector{nx, Int64}(2:nx+1)]
+
+            # update parameters of the bound-dual update rules
+            ζl = -β .* Σ_L
             χl = inv_ul .* μ - zl - Σ_L .* α
 
-            ζu =  Σ_U .* β
+            ζu = β .* Σ_U
             χu = inv_uu .* μ - zu + Σ_U .* α
 
+            if ng > 0
+                ζsl = -βs .* Σs_L
+                χsl = inv_sl .* μ - zsl - Σs_L .* αs
+                ζsu = βs .* Σs_U
+                χsu = inv_su .* μ - zsu + Σs_U .* αs
+            else
+                ζsl = @SMatrix zeros(T, ng, nx)
+                χsl = @SVector zeros(T, ng)
+                ζsu = @SMatrix zeros(T, ng, nx)
+                χsu = @SVector zeros(T, ng)
+            end
+
             # update the update rule
-            solver.update[t] = UpdateRule{T, nx, nu, nc, nux, ncx}(α, ψ, β, ω, χl, χu, ζl, ζu)
+            solver.update[t] = UpdateRule(
+                α, αs, ψh, ψg, β, βs, ωh, ωg,
+                χl, χu, ζl, ζu, χsl, χsu, ζsl, ζsu)
 
             # evaluate optimality dual error
             Lu = lu_ - zl + zu + fu' * λ
-            if nc > 0
-                Lu = Lu + cu' * ϕ
+            if nh > 0
+                Lu = Lu + hu' * ϕ
+            end
+            if ng > 0
+                Lu = Lu + gu' * ν
+                Ls = -ν - zsl + zsu
+                data.dual_inf = max(data.dual_inf, norm(Ls, Inf))
             end
 
             data.dual_inf = max(data.dual_inf, norm(Lu, Inf))
             z_norm += sum(zl)
             z_norm += sum(zu)
+            z_norm += sum(zsl)
+            z_norm += sum(zsu)
             ϕ_norm += norm(ϕ, 1)
+            ng > 0 && (ϕ_norm += norm(ν, 1))
 
-            # Update return V derivatives for next timestep Vxx = C + β' * B + ω' cx
+            # Update return V derivatives for the next timestep.
             V̂xx = C + β' * B
             V̂x = lx + β' * Qû + fx' * V̂x
             λ = lx + fx' * λ
-            if nc > 0
-                V̂xx = V̂xx + ω' * cx
-                V̂x = V̂x + cx' * ϕ + ω' * c
-                λ = λ + cx' * ϕ
+            if nh > 0
+                V̂xx = V̂xx + ωh' * hx
+                V̂x = V̂x + hx' * ϕ + ωh' * h
+                λ = λ + hx' * ϕ
+            end
+            if ng > 0
+                V̂xx = V̂xx + ωg' * gx
+                V̂x = V̂x + βs' * Qŝ + gx' * ν + ωg' * q
+                λ = λ + gx' * ν
             end
 
             # evaluate sufficient decrease condition in forward pass
             data.expected_change_L += dot(Qû, α)
-            nc > 0 && (data.expected_change_L += dot(c, ψ))
+            if nh > 0
+                data.expected_change_L += dot(h, ψh)
+            end
+            if ng > 0
+                data.expected_change_L += dot(Qŝ, αs) + dot(q, ψg)
+            end
         end
-        scaling_dual = max(options.s_max, (ϕ_norm + z_norm) / max(ni + nc * ocp.N, 1.0))  / options.s_max
+        scaling_dual = max(options.s_max,
+            (ϕ_norm + z_norm) / max(ni + (nh + ng) * ocp.N, 1.0)) / options.s_max
         scaling_cs = max(options.s_max, z_norm / max(ni, 1.0))  / options.s_max
         data.dual_inf /= scaling_dual
         data.cs_inf_0 /= scaling_cs

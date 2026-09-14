@@ -17,7 +17,7 @@ N = 101
 n_ocp = 100
 
 const nx::Int64 = 4
-const nu::Int64 = 21
+const nu::Int64 = 15
 
 include("../models/cartpole.jl")
 visualise && include("../visualise/visualise_cartpole.jl")
@@ -51,8 +51,14 @@ for seed = 1:n_ocp
 
     function l(x, u)
 		F = u[1]
-        s = u[(nF + nq + 12) .+ (1:6)]
-		J = 0.01 * Δ * F * F + sum(s)
+        β1 = u[(nF + nq) .+ (1:2)]
+        β2 = u[(nF + nq + 2) .+ (1:2)]
+        η1 = u[(nF + nq + 4) .+ (1:2)]
+        η2 = u[(nF + nq + 6) .+ (1:2)]
+        ψ = u[(nF + nq + 8) .+ (1:2)]
+        s = u[(nF + nq + 10) .+ (1:2)]
+        J = 0.01 * Δ * F * F +
+            sum([ψ .* s; β1 .* η1; β2 .* η2])
 		return J
 	end
 	function lN(x, u)
@@ -63,7 +69,14 @@ for seed = 1:n_ocp
 		J = 200.0 * dot(q̇ᵐ⁻, q̇ᵐ⁻)
 		J += 700.0 * dot(q - qN, q - qN)
 
-        J += 0.01 * u' * u
+        β1 = u[(nF + nq) .+ (1:2)]
+        β2 = u[(nF + nq + 2) .+ (1:2)]
+        η1 = u[(nF + nq + 4) .+ (1:2)]
+        η2 = u[(nF + nq + 6) .+ (1:2)]
+        ψ = u[(nF + nq + 8) .+ (1:2)]
+        s = u[(nF + nq + 10) .+ (1:2)]
+        complementarity = [ψ .* s; β1 .* η1; β2 .* η2]
+        J += 0.01 * (u' * u + complementarity' * complementarity)
 		return J
 	end
 	stage_obj = Objective(l, nx, nu)
@@ -71,17 +84,51 @@ for seed = 1:n_ocp
 
     # ## Constraints
 
-    c = (x, u) -> implicit_contact_dynamics_slack(cartpole, x, u, Δ)
-    constraints = EqualityConstraints(c, nx, nu)
+    function h(x, u)
+        q⁻ = x[1:nq]
+        q = x[nq .+ (1:nq)]
+        q⁺ = u[nF .+ (1:nq)]
+        q̇ᵐ⁺ = (q⁺ - q) / Δ
+        F = u[nF]
+        β1 = u[(nF + nq) .+ (1:2)]
+        β2 = u[(nF + nq + 2) .+ (1:2)]
+        η1 = u[(nF + nq + 4) .+ (1:2)]
+        η2 = u[(nF + nq + 6) .+ (1:2)]
+        ψ = u[(nF + nq + 8) .+ (1:2)]
+        s = u[(nF + nq + 10) .+ (1:2)]
+        λ = [β1[1] - β1[2]; β2[1] - β2[2]]
+        γ1 = cartpole.friction[1] * (cartpole.mp + cartpole.mc) * cartpole.g
+        γ2 = cartpole.friction[2] * cartpole.mp * cartpole.g * cartpole.l
+        return [
+            manipulator_fd(cartpole, Δ, q⁻, q, q⁺, F, λ);
+            [q̇ᵐ⁺[1]; -q̇ᵐ⁺[1]] .+ ψ[1] - η1;
+            [q̇ᵐ⁺[2]; -q̇ᵐ⁺[2]] .+ ψ[2] - η2;
+            γ1 - sum(β1) - s[1];
+            γ2 - sum(β2) - s[2]
+        ]
+    end
+    function g(x, u)
+        β1 = u[(nF + nq) .+ (1:2)]
+        β2 = u[(nF + nq + 2) .+ (1:2)]
+        η1 = u[(nF + nq + 4) .+ (1:2)]
+        η2 = u[(nF + nq + 6) .+ (1:2)]
+        ψ = u[(nF + nq + 8) .+ (1:2)]
+        s = u[(nF + nq + 10) .+ (1:2)]
+        return [ψ .* s; β1 .* η1; β2 .* η2]
+    end
+    equalities = EqualityConstraints(h, nx, nu)
+    inequalities = InequalityConstraints(g, nx, nu,
+        SVector{6, T}(zeros(T, 6)), SVector{6, T}(Inf * ones(T, 6)))
 
     # ## Control Limits
 
-    cl = ControlLimits(
-        SVector{nu, T}([-T(10.0) * ones(T, nF); -T(Inf) * ones(T, nq);       zeros(T, 12);         zeros(T, 6)]),
-        SVector{nu, T}([ T(10.0) * ones(T, nF);  T(Inf) * ones(T, nq); Inf * ones(T, 12); T(Inf) * ones(T, 6)])
+    control_limits = ControlLimits(
+        SVector{nu, T}([-T(10.0) * ones(T, nF); -T(Inf) * ones(T, nq);       zeros(T, 12)]),
+        SVector{nu, T}([ T(10.0) * ones(T, nF);  T(Inf) * ones(T, nq); T(Inf) * ones(T, 12)])
     )
 
-    ocp = build_ocp(N, stage_obj, term_obj, dyn, constraints, cl)
+    ocp = build_ocp(N, stage_obj, term_obj, dyn,
+        equalities, inequalities, control_limits)
     solver = Solver(ocp; options=options)
     solver.options.verbose = verbose
     
@@ -89,7 +136,7 @@ for seed = 1:n_ocp
     
 	x1 = @SVector zeros(T, 4)
     q_init = [@SVector zeros(T, 2) for _ = 1:N]
-    ū = [SVector{nu, T}([zeros(T, nF); q_init[k]; T(0.01) * ones(T, 12); T(0.01) * ones(T, 6)]) for k = 1:N]
+    ū = [SVector{nu, T}([zeros(T, nF); q_init[k]; T(0.01) * ones(T, 12)]) for k = 1:N]
     
     solve!(solver, x1, ū)
 

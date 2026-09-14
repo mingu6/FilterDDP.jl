@@ -10,7 +10,7 @@ using BenchmarkTools
 visualise = false
 benchmark = false
 verbose = false
-control_limits = false
+use_control_limits = false
 
 T = Float64
 Δ = 0.05
@@ -59,13 +59,14 @@ for seed = 1:n_ocp
 	stage_obj = Objective(l, nx, nu)
 	term_obj = Objective(lN, nx, nu)
 
-	constraints = EqualityConstraints(nx, nu)
+	equalities = EqualityConstraints(nx, nu)
 
 	# ## Control Limits
-	lim = control_limits ? T(8.0) : T(Inf)
-    cl = ControlLimits(SVector{nu, T}(T[-lim]), SVector{nu, T}(T[lim]))
+	lim = use_control_limits ? T(8.0) : T(Inf)
+	control_limits = ControlLimits(
+		SVector{nu, T}(T[-lim]), SVector{nu, T}(T[lim]))
 
-	ocp = build_ocp(N, stage_obj, term_obj, dyn, constraints, cl)
+	ocp = build_ocp(N, stage_obj, term_obj, dyn, equalities, control_limits)
 	solver = Solver(ocp; options=options)
 	solver.options.verbose = verbose
 

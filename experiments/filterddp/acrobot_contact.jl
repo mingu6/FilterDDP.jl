@@ -17,7 +17,7 @@ N = 101
 n_ocp = 100
 
 const nx::Int64 = 4
-const nu::Int64 = 9
+const nu::Int64 = 7
 
 include("../models/acrobot.jl")
 visualise && include("../visualise/visualise_acrobot.jl")
@@ -57,8 +57,8 @@ for seed = 1:n_ocp
 
 	function l(x, u)
 		τ = u[1]
-		s = u[(nτ + nq + 4) .+ (1:2)]
-		J = 0.01 * Δ * τ * τ + 2. * sum(s)
+		complementarity = u[(nτ + nq) .+ (1:2)] .* u[(nτ + nq + 2) .+ (1:2)]
+		J = 0.01 * Δ * τ * τ + 2. * sum(complementarity)
 		return J
 	end
 	function lN(x, u)
@@ -69,7 +69,8 @@ for seed = 1:n_ocp
 		J = 200.0 * dot(q̇ᵐ⁻, q̇ᵐ⁻)
 		J += 700.0 * dot(q - qN, q - qN)
 
-		J += 0.01 * u' * u
+		complementarity = u[(nτ + nq) .+ (1:2)] .* u[(nτ + nq + 2) .+ (1:2)]
+		J += 0.01 * (u' * u + complementarity' * complementarity)
 		return J
 	end
 	stage_obj = Objective(l, nx, nu)
@@ -77,24 +78,40 @@ for seed = 1:n_ocp
 
 	# ## Constraints
 
-	c = (x, u) -> implicit_contact_dynamics_slack(acrobot_impact, x, u, Δ)
-	constraints = EqualityConstraints(c, nx, nu)
+	function h(x, u)
+		q⁻ = x[1:nq]
+		q = x[nq .+ (1:nq)]
+		q⁺ = u[nτ .+ (1:nq)]
+		τ = u[nτ]
+		λ = u[(nτ + nq) .+ (1:2)]
+		s = u[(nτ + nq + 2) .+ (1:2)]
+		return [
+			manipulator_fd(acrobot_impact, Δ, q⁻, q, q⁺, τ, λ);
+			s .- ϕ_func(acrobot_impact, q⁺)
+		]
+	end
+	g = (x, u) ->
+		u[(nτ + nq) .+ (1:2)] .* u[(nτ + nq + 2) .+ (1:2)]
+	equalities = EqualityConstraints(h, nx, nu)
+	inequalities = InequalityConstraints(g, nx, nu,
+		SVector{2, T}(zeros(T, 2)), SVector{2, T}(Inf * ones(T, 2)))
 
 	# ## Control Limits
 
 	control_limits = ControlLimits(
-		SVector{nu, T}([-T(8.0); -T(Inf) * ones(T, nq);          zeros(T, 6)]),
-		SVector{nu, T}([ T(8.0);  T(Inf) * ones(T, nq); T(Inf) * ones(T, 6)])
+		SVector{nu, T}([-T(8.0); -T(Inf) * ones(T, nq);          zeros(T, 4)]),
+		SVector{nu, T}([ T(8.0);  T(Inf) * ones(T, nq); T(Inf) * ones(T, 4)])
 	)
 
-	ocp = build_ocp(N, stage_obj, term_obj, dyn, constraints, control_limits)
+	ocp = build_ocp(N, stage_obj, term_obj, dyn,
+		equalities, inequalities, control_limits)
 	solver = Solver(ocp; options=options)
 	solver.options.verbose = verbose
 
 	# ## Initialise solver and solve
 	
 	x1 = SVector{4, T}(zeros(T, 4))
-	ū = [SVector{nu, T}([zeros(T, nτ + 2); T(0.01) * ones(T, 6)]) for _ = 1:N]
+	ū = [SVector{nu, T}([zeros(T, nτ + 2); T(0.01) * ones(T, 4)]) for _ = 1:N]
 	solve!(solver, x1, ū)
 
 	if benchmark

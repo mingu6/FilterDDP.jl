@@ -11,8 +11,8 @@ RuntimeGeneratedFunctions.init(@__MODULE__)
 
 include(joinpath("ocp", "objective.jl"))
 include(joinpath("ocp", "dynamics.jl"))
-include(joinpath("ocp", "constraints.jl"))
 include(joinpath("ocp", "control_limits.jl"))
+include(joinpath("ocp", "constraints.jl"))
 include(joinpath("ocp", "ocp.jl"))
 include("options.jl")
 include("solver_data.jl")
@@ -24,12 +24,16 @@ include("solve.jl")
 
 export Objective
 export EqualityConstraints
+export InequalityConstraints
 export Dynamics
+export BoundConstraints
 export ControlLimits
 export build_ocp
 export Solver,
     Options,
     solve!,
     get_trajectory,
-    get_feedback
+    get_feedback,
+    get_slack_trajectory,
+    get_slack_feedback
 end # module

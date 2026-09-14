@@ -16,7 +16,7 @@ T = Float64
 N = 101
 n_ocp = 100
 
-const nu::Int64 = 11
+const nu::Int64 = 8
 const nx::Int64 = 4
 
 options = Options{T}(verbose=verbose, optimality_tolerance=1e-7)
@@ -99,8 +99,11 @@ for seed = 1:n_ocp
 
     # ## Objective
 
-    l = (x, u) -> 1e-2 * dot(u[1:2], u[1:2]) + 2. * sum(u[7:8]) + 2. * sum(u[11])
-    lN = (x, u) -> 20.0 * dot(x - xN, x - xN) + 2. * sum(u[7:8]) + 2. * sum(u[11])
+    complementarity = (x, u) -> [u[5] * u[3]; u[6] * u[4]]
+    l = (x, u) -> 1e-2 * dot(u[1:2], u[1:2]) +
+        2. * sum(complementarity(x, u)) + 2. * u[8]
+    lN = (x, u) -> 20.0 * dot(x - xN, x - xN) +
+        2. * sum(complementarity(x, u)) + 2. * u[8]
     stage_obj = Objective(l, nx, nu)
 	term_obj = Objective(lN, nx, nu)
 
@@ -108,28 +111,30 @@ for seed = 1:n_ocp
 
     function obs_constr(x, u)
         xdiff = x[1:2] - obstacle[1:2]
-        return (obstacle[3] + r_total)^2 - xdiff' * xdiff + u[10] - u[11]
+        return (obstacle[3] + r_total)^2 - xdiff' * xdiff - u[8]
     end
 
-    function c(x, u)
+    function h(x, u)
         [
         μ_fric * u[1] - u[2] - u[5];
         μ_fric * u[1] + u[2] - u[6];
-        u[5] * u[3] - u[7];
-        u[6] * u[4] - u[8];
-        x[4] - u[9];  # bound constraint on ϕ_t
-        obs_constr(x, u)
+        x[4] - u[7]  # bound constraint on ϕ_t
         ]
     end
 
-    constraints = EqualityConstraints(c, nx, nu)
+    g = (x, u) -> [complementarity(x, u); obs_constr(x, u)]
+    equalities = EqualityConstraints(h, nx, nu)
+    inequalities = InequalityConstraints(g, nx, nu,
+        SVector{3, T}([0.0, 0.0, -Inf]), SVector{3, T}([Inf, Inf, 0.0]))
 
     # ## Control Limits
 
-    cl = ControlLimits(SVector{nu, T}([0.0, -force_lim, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.9, 0.0, 0.0]),
-                SVector{nu, T}([force_lim, force_lim, vel_lim, vel_lim, Inf, Inf, Inf, Inf, 0.9, Inf, Inf]))
+    control_limits = ControlLimits(
+        SVector{nu, T}([0.0, -force_lim, 0.0, 0.0, 0.0, 0.0, -0.9, 0.0]),
+        SVector{nu, T}([force_lim, force_lim, vel_lim, vel_lim, Inf, Inf, 0.9, Inf]))
 
-    ocp = build_ocp(N, stage_obj, term_obj, dyn, constraints, cl)
+    ocp = build_ocp(N, stage_obj, term_obj, dyn,
+        equalities, inequalities, control_limits)
     solver = Solver(ocp; options=options)
     solver.options.verbose = verbose
         

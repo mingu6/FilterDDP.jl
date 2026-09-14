@@ -1,11 +1,11 @@
-function solve!(solver::Solver{T, nx, nu, nc, nux, ncx, F1, F2, F3, F4, F5, F6, C1, C2, C3, C4, C5, C6, OS1, OS2, OS3, OS4, OS5, OS6, OT1, OT2, OT3, OT4, OT5, OT6},
-        x1::SVector{nx, T}, u::Vector{SVector{nu, T}}; kwargs...) where {T, nx, nu, nc, nux, ncx, F1, F2, F3, F4, F5, F6, C1, C2, C3, C4, C5, C6, OS1, OS2, OS3, OS4, OS5, OS6, OT1, OT2, OT3, OT4, OT5, OT6}
+function solve!(solver::Solver{T, nx, nu},
+    x1::SVector{nx, T}, u::Vector{SVector{nu, T}}; kwargs...) where {T, nx, nu}
     initialize_trajectory!(solver, u, x1)
     status = solve!(solver; kwargs...)
     return status
 end
 
-function solve!(solver::Solver{T, nx, nu, nc, nux, ncx,}) where {T, nx, nu, nc, nux, ncx,}
+function solve!(solver::Solver)
     (solver.options.verbose && solver.data.k==0) && solver_info()
 
 	ocp = solver.ocp
@@ -16,7 +16,9 @@ function solve!(solver::Solver{T, nx, nu, nc, nux, ncx,}) where {T, nx, nu, nc, 
     reset_filter!(data)
 
     data.μ = options.μ_init
-    ni = (ocp.control_limits.nl + ocp.control_limits.nu) * ocp.N
+    ni = (ocp.control_limits.nl + ocp.control_limits.nu +
+        ocp.inequality_constraints.bounds.nl +
+        ocp.inequality_constraints.bounds.nu) * ocp.N
 
     while data.k < options.max_iterations
         backward_pass!(solver, ocp, solver.nominal, data, options, verbose=options.verbose)

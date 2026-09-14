@@ -6,7 +6,7 @@ FilterDDP is a Differential Dynamic Programming (DDP) algorithm for solving a ge
 
 Furthermore, an interior point extension analogous to [Pavlov et al. (2021)](https://ieeexplore.ieee.org/document/9332234) is applied for handling inequality constraints. The local quadratic convergence of FilterDDP is formally established in the research paper. The global convergence proof is coming soon! Note that FilterDDP requires exact Hessians and does not perform well under a quasi-Newton approximation.
 
-## Global convergence proof now (3 June 2026) available [http://arxiv.org/abs/2606.01487][http://arxiv.org/abs/2606.01487]
+## Global convergence proof now (3 June 2026) available [http://arxiv.org/abs/2606.01487](http://arxiv.org/abs/2606.01487)
 
 FilterDDP can solve OCPs of the form
 ```math
@@ -14,12 +14,12 @@ FilterDDP can solve OCPs of the form
     \underset{\mathbf{x}, \mathbf{u}}{\text{minimize}}  & J(\mathbf{x}, \mathbf{u}) = \sum_{t=1}^{N-1} \ell(x_t, u_t) + \ell^F(x_t, u_t) \\
     \text{subject to} & x_1 = \hat{x}_1, \\
     & x_{t+1} = f(x_t, u_t) \quad \text{for } t \in\{1,\dots, N-1\}, \\
-    & c(x_t, u_t) = 0 \quad \text{for } t \in\{1,\dots, N\}, \\
-    & b^L \leq u_t \leq b^U \quad \text{for } t \in\{1,\dots, N\},
+    & h(x_t, u_t) = 0 \quad \text{for } t \in\{1,\dots, N\}, \\
+    & b_g^L \leq g(x_t, u_t) \leq b_g^U \quad \text{for } t \in\{1,\dots, N\}, \\
+    & b_u^L \leq u_t \leq b_u^U \quad \text{for } t \in\{1,\dots, N\},
 \end{array}
 ```
-where $\mathbf{x} = (x_1, \dots, x_{N})$ is the state trajectory and $\mathbf{u} = (u_1, \dots, u_{N})$ is the control trajectory. Control limits are specified as $b^L \in [-\infty, \infty)$ and $b^U \in (-\infty, \infty]$.
-
+where $\mathbf{x} = (x_1, \dots, x_{N})$ is the state trajectory and $\mathbf{u} = (u_1, \dots, u_{N})$ is the control trajectory. Equality, inequality, and control-bound definitions use `EqualityConstraints`, `InequalityConstraints`, and `ControlLimits`, respectively.
 - All derivatives, including Jacobians and Hessians are automatically generated using [Symbolics.jl](https://github.com/JuliaSymbolics/Symbolics.jl) for user-provided costs/objectives, constraints, and dynamics.
 
 - Linear algebra is implemented using statically-typed arrays through [StaticArrays.jl](https://github.com/JuliaArrays/StaticArrays.jl). This yields extremely fast solve times for sufficiently small problem sizes (with respect to number of controls, states and constraints).
@@ -28,11 +28,19 @@ where $\mathbf{x} = (x_1, \dots, x_{N})$ is the state trajectory and $\mathbf{u}
 
 ## Nonlinear Inequality Constraints
 
-FilterDDP is able to handle nonlinear inequality constraints for the form $b_L \leq g(x_t, \tilde{u}_t) \leq b_U$ through the inclusion of slack variables, i.e., let $u_t = (\tilde{u}_t^\top, s_t)^\top$ and replace the aforementioned nonlinear inequality constraints with equality constraints $g(x_t, \tilde{u}_t) - s_t = 0$ and control limits $b^L \leq s_t \leq b^U$.
+Nonlinear inequalities $b_g^L \leq g(x_t,u_t) \leq b_g^U$ are represented by `InequalityConstraints`. FilterDDP introduces solver-owned slacks
+
+```math
+g(x_t,u_t)-s_t=0, \qquad b_g^L \leq s_t \leq b_g^U.
+```
+
+The slacks are not appended to the user control. Objectives and dynamics continue to receive only `(x, u)`, while `get_slack_trajectory` and `get_slack_feedback` expose the internal slack solution and policy. For maximum performance, control and slack bounds are eliminated in the stage-wise KKT systems.
 
 ## Unconstrained (and Bound Constrained) Differential Dynamic Programming
 
 FilterDDP.jl also provides an efficient Julia implmentation of both the unconstrained DDP algorithm by Mayne et al. (1970) and the Interior Point DDP (IPDDP) algorithm by [Pavlov et al. (2021)](https://ieeexplore.ieee.org/document/9332234) specialised to control limits only. The unconstrained DDP algorithm is applied when neither equality nor inequality constraints are added and IPDDP is applied when only control limits are added. In both cases, the dynamics dual variable as defined by (8) and (13) in the FilterDDP paper are replaced with the value function gradient $\bar{V}_x^t$ due to improved numerical performance overall.
+
+A control-limits-only OCP can be constructed directly with `build_ocp(N, stage_objective, terminal_objective, dynamics, control_limits)`.
 
 ---
 
@@ -64,7 +72,7 @@ using FilterDDP
 
 N = 101         # prediction horizon
 const nx::Int64 = 2          # position and velocity
-const nu::Int64 = 3          # pushing force, 2x slacks (for the + and - components of abs work)
+const nu::Int64 = 2          # pushing force and absolute-work epigraph
 x1 = @SVector zeros(2)
 
 # ## Define the discrete-time dynamics
@@ -75,22 +83,28 @@ dyn = Dynamics(f, nx, nu)
 # ## Define the stage and terminal objective functions
 
 xN = [1.0, 0.0]
-l = (x, u) -> 0.01 * (u[2] + u[3])
+l = (x, u) -> 0.01 * (2.0 * u[2] - u[1] * x[2])
 lN = (x, u) -> 500.0 * (x - xN)' * (x - xN)
 stage_obj = Objective(l, nx, nu)
 term_obj = Objective(lN, nx, nu)
 
 # ## Define constraint functions
 
-constraints = EqualityConstraints((x, u) -> [u[2] - u[3] - u[1] * x[2]], nx,  nu)
+equalities = EqualityConstraints(nx, nu)
+inequalities = InequalityConstraints(
+    (x, u) -> [u[2] - u[1] * x[2]],
+    nx, nu, @SVector([0.0]), @SVector([Inf]))
 
 # ## Define control limits (hard constraints)
 
-control_limits = ControlLimits(SVector{nu, Float64}([-10.0, 0.0, 0.0]), SVector{nu, Float64}([10.0, Inf, Inf]))
+control_limits = ControlLimits(
+    SVector{nu, Float64}([-10.0, 0.0]),
+    SVector{nu, Float64}([10.0, Inf]))
 
 # ## Create an OCP object containing the problem definition
 
-ocp = build_ocp(N, stage_obj, term_obj, dyn, constraints, control_limits)
+ocp = build_ocp(N, stage_obj, term_obj, dyn,
+    equalities, inequalities, control_limits)
 
 # ## Create a solver instance with the OCP and allocate workspace (memory)
 
@@ -99,7 +113,7 @@ solver = Solver(ocp; options=options)
 
 # ## Initialise trajectories solve OCP
 
-ū = [SVector{nu, Float64}([0.01; 0.01; 0.01]) for k = 1:N]
+ū = [SVector{nu, Float64}([0.01; 0.01]) for k = 1:N]
 solve!(solver, x1, ū)
 
 # ## Recover solution trajectories post-solve

@@ -16,7 +16,7 @@ N = 101
 x1 = @SVector zeros(T, 2)
     
 const nx::Int64 = 2  # position and velocity
-const nu::Int64 = 3  # pushing force, 2x slacks for + and - components of abs work
+const nu::Int64 = 2  # pushing force and absolute-work epigraph
 n_ocp = 1
 
 options = Options{T}(verbose=verbose, optimality_tolerance=1e-7)
@@ -37,26 +37,31 @@ for seed = 1:n_ocp
     xN_v = T(0.0)
     xN = T[xN_y; xN_v]
 
-    l = (x, u) -> Δ * (u[2] + u[3])
+    l = (x, u) -> Δ * (2.0 * u[2] - u[1] * x[2])
     lN = (x, u) -> 500.0 * dot(x - xN, x - xN)
     stage_obj = Objective(l, nx, nu)
 	term_obj = Objective(lN, nx, nu)
 
     # ## Constraints
 
-    constraints = EqualityConstraints((x, u) -> [u[2] - u[3] - u[1] * x[2]], nx,  nu)
+    equalities = EqualityConstraints(nx, nu)
+    inequalities = InequalityConstraints(
+        (x, u) -> [u[2] - u[1] * x[2]],
+        nx, nu, @SVector([0.0]), @SVector([Inf]))
 
     # ## Control Limits
 
-    cl = ControlLimits(SVector{nu, T}([-10.0, 0.0, 0.0]), SVector{nu, T}([10.0, Inf, Inf]))
+    control_limits = ControlLimits(
+        SVector{nu, T}([-10.0, 0.0]), SVector{nu, T}([10.0, Inf]))
 
-    ocp = build_ocp(N, stage_obj, term_obj, dyn, constraints, cl)
+    ocp = build_ocp(N, stage_obj, term_obj, dyn,
+        equalities, inequalities, control_limits)
     solver = Solver(ocp; options=options)
     solver.options.verbose = verbose
     
     # ## Initialise solver and solve
     
-    ū = [SVector{nu, T}([0.01; 0.01; 0.01]) for k = 1:N]
+    ū = [SVector{nu, T}([0.01; 0.01]) for k = 1:N]
     solve!(solver, x1, ū)
 
     if benchmark

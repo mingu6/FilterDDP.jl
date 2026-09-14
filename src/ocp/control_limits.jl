@@ -1,18 +1,20 @@
-struct ControlLimits{T, nu}
-    l::SVector{nu, T}
-    u::SVector{nu, T}
-    maskl::SVector{nu, Bool}
-    masku::SVector{nu, Bool}
+struct BoundConstraints{T, n}
+    l::SVector{n, T}
+    u::SVector{n, T}
+    maskl::SVector{n, Bool}
+    masku::SVector{n, Bool}
     nl::Int64
     nu::Int64
 end
 
-function ControlLimits(l::SVector{nu, T}, u::SVector{nu, T}) where {T, nu}
+function BoundConstraints(l::SVector{n, T}, u::SVector{n, T}) where {T, n}
     @assert length(l) == length(u)
     @assert all(u .>= l)
     maskl = (l .!= -floatmax(T)) .&& .!isinf.(l)
     masku = (u .!= floatmax(T)) .&& .!isinf.(u)
     nlo = sum(maskl)
     nup = sum(masku)
-    return ControlLimits{T, nu}(l, u, maskl, masku, nlo, nup)
+    return BoundConstraints{T, n}(l, u, maskl, masku, nlo, nup)
 end
+
+const ControlLimits = BoundConstraints

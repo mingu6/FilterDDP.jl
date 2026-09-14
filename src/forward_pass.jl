@@ -1,6 +1,6 @@
-function forward_pass!(solver::Solver{T, nx, nu, nc, nux, ncx},
-            ocp::OCP{T, nx, nu, nc}, data::SolverData{T},
-            options::Options{T}; verbose=false) where {T, nx, nu, nc, nux, ncx}
+function forward_pass!(solver::Solver{T, nx, nu, nh, ng},
+            ocp::OCP{T, nx, nu, nh, ng}, data::SolverData{T},
+            options::Options{T}; verbose=false) where {T, nx, nu, nh, ng}
     data.l = 0  # line search iteration counter
     data.status = 0
     data.step_size = T(1.0)
@@ -41,10 +41,13 @@ function forward_pass!(solver::Solver{T, nx, nu, nc, nux, ncx},
     data.status != 0 && (verbose && (@warn "Line search failed to find a suitable iterate"))
 end
 
-function rollout!(solver::Solver{T, nx, nu, nc, nux, ncx}, ocp::OCP{T, nx, nu, nc},
-            data::SolverData{T}, τ::T, step_size::T) where {T, nx, nu, nc, nux, ncx}
+function rollout!(solver::Solver{T, nx, nu, nh, ng},
+            ocp::OCP{T, nx, nu, nh, ng}, data::SolverData{T},
+            τ::T, step_size::T) where {T, nx, nu, nh, ng}
     μ = data.μ
-    cl = ocp.control_limits
+    control_limits = ocp.control_limits
+    inequalities = ocp.inequality_constraints
+    slack_bounds = inequalities.bounds
 
     data.status = 0
     data.primal_1_next = T(0.0)
@@ -55,46 +58,72 @@ function rollout!(solver::Solver{T, nx, nu, nc, nux, ncx}, ocp::OCP{T, nx, nu, n
 
         x̄ = solver.nominal[t].x
         ū = solver.nominal[t].u
-        ϕ̄  = solver.nominal[t].ϕ
+        s̄ = solver.nominal[t].s
+        ϕ̄ = solver.nominal[t].ϕ
+        ν̄ = solver.nominal[t].ν
         α = solver.update[t].α
-        ψ = solver.update[t].ψ
+        αs = solver.update[t].αs
+        ψh = solver.update[t].ψh
+        ψg = solver.update[t].ψg
         β = solver.update[t].β
-        ω = solver.update[t].ω
+        βs = solver.update[t].βs
+        ωh = solver.update[t].ωh
+        ωg = solver.update[t].ωg
         zl̄ = solver.nominal[t].zl
         zū = solver.nominal[t].zu
+        zsl̄ = solver.nominal[t].zsl
+        zsū = solver.nominal[t].zsu
         χl = solver.update[t].χl
         χu = solver.update[t].χu
         ζl = solver.update[t].ζl
         ζu = solver.update[t].ζu
+        χsl = solver.update[t].χsl
+        χsu = solver.update[t].χsu
+        ζsl = solver.update[t].ζsl
+        ζsu = solver.update[t].ζsu
 
         δx = x - x̄
 
         u = ū + step_size .* α + β * δx
-        ϕ = ϕ̄  + step_size .* ψ + ω * δx
+        ϕ = ϕ̄ + step_size .* ψh + ωh * δx
         zl = zl̄ + step_size .* χl + ζl * δx
         zu = zū + step_size .* χu + ζu * δx
+        if ng > 0
+            s = s̄ + step_size .* αs + βs * δx
+            ν = ν̄ + step_size .* ψg + ωg * δx
+            zsl = zsl̄ + step_size .* χsl + ζsl * δx
+            zsu = zsū + step_size .* χsu + ζsu * δx
+        else
+            s, ν, zsl, zsu = s̄, ν̄, zsl̄, zsū
+        end
         
         # update current trajectory
-        solver.current[t] = TrajectoryElement{T, nx, nu, nc}(x, u, ϕ, zl, zu)
+        solver.current[t] = TrajectoryElement(
+            x, u, s, ϕ, ν, zl, zu, zsl, zsu)
 
         # evaluate constraints and violation
-        if nc > 0
-            c = ocp.constraints.c(x, u)
-            data.primal_1_next += norm(c, 1)
-            data.barrier_lagrangian_next += dot(c, ϕ)
+        if nh > 0
+            h = ocp.equality_constraints.h(x, u)
+            data.primal_1_next += norm(h, 1)
+            data.barrier_lagrangian_next += dot(h, ϕ)
+        end
+        if ng > 0
+            q = inequalities.g(x, u) - s
+            data.primal_1_next += norm(q, 1)
+            data.barrier_lagrangian_next += dot(q, ν)
         end
 
         # check frac-to-boundary condition
-        ul = u - cl.l
-        uu = cl.u - u
-        ul̄ = ū - cl.l
-        uū = cl.u - ū
+        ul = u - control_limits.l
+        uu = control_limits.u - u
+        ul̄ = ū - control_limits.l
+        uū = control_limits.u - ū
 
-        if any((ul̄ .* (1. - τ) .> ul) .* cl.maskl)
+        if any((ul̄ .* (1. - τ) .> ul) .* control_limits.maskl)
             data.status = 2
             return
         end
-        if any((uū .* (1. - τ) .> uu) .* cl.masku)
+        if any((uū .* (1. - τ) .> uu) .* control_limits.masku)
             data.status = 2
             return
         end
@@ -107,9 +136,37 @@ function rollout!(solver::Solver{T, nx, nu, nc, nux, ncx}, ocp::OCP{T, nx, nu, n
             return
         end
 
+        if ng > 0
+            sl = s - slack_bounds.l
+            su = slack_bounds.u - s
+            sl̄ = s̄ - slack_bounds.l
+            sū = slack_bounds.u - s̄
+
+            if any((sl̄ .* (1. - τ) .> sl) .* slack_bounds.maskl)
+                data.status = 2
+                return
+            end
+            if any((sū .* (1. - τ) .> su) .* slack_bounds.masku)
+                data.status = 2
+                return
+            end
+            if any(zsl̄ .* (1. - τ) .> zsl)
+                data.status = 2
+                return
+            end
+            if any(zsū .* (1. - τ) .> zsu)
+                data.status = 2
+                return
+            end
+        end
+
         # evaluate barrier lagrangian
-        data.barrier_lagrangian_next -= μ * dot(log.(ul), cl.maskl)
-        data.barrier_lagrangian_next -= μ * dot(log.(uu), cl.masku)
+        data.barrier_lagrangian_next -= μ * dot(log.(ul), control_limits.maskl)
+        data.barrier_lagrangian_next -= μ * dot(log.(uu), control_limits.masku)
+        if ng > 0
+            data.barrier_lagrangian_next -= μ * dot(log.(sl), slack_bounds.maskl)
+            data.barrier_lagrangian_next -= μ * dot(log.(su), slack_bounds.masku)
+        end
         if t == ocp.N
             data.barrier_lagrangian_next += ocp.term_objective.l(x, u)[1]
         else
