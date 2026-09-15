@@ -33,10 +33,11 @@ struct OCP{T, nx, nu, nh, ng, nps, npt, npd, npe, npi, D, E, I, C, OS, OT}
     parameters::OCPParameters{T, nps, npt, npd, npe, npi}
 end
 
-function build_ocp(N::Int64, stage_objective::Objective{nx, nu, nps},
-        term_objective::TerminalObjective{nx, npt}, dynamics::Dynamics{nx, nu, npd},
-        equality_constraints::EqualityConstraints{nx, nu, nh, npe},
-        inequality_constraints::InequalityConstraints{T, nx, nu, ng, npi},
+function build_ocp(N::Int64, stage_objective::AbstractStageObjective{nx, nu, nps},
+    term_objective::AbstractTerminalObjective{nx, npt},
+    dynamics::AbstractDynamics{nx, nu, npd},
+    equality_constraints::AbstractEqualityConstraints{nx, nu, nh, npe},
+    inequality_constraints::AbstractInequalityConstraints{T, nx, nu, ng, npi},
         control_limits::ControlLimits{T, nu};
         parameters::OCPParameters{T, nps, npt, npd, npe, npi}=OCPParameters(T)
         ) where {T<:Real, nx, nu, nh, ng, nps, npt, npd, npe, npi}
@@ -48,9 +49,10 @@ function build_ocp(N::Int64, stage_objective::Objective{nx, nu, nps},
         inequality_constraints, control_limits, parameters)
 end
 
-function build_ocp(N::Int64, stage_objective::Objective{nx, nu, nps},
-    term_objective::TerminalObjective{nx, npt}, dynamics::Dynamics{nx, nu, npd},
-    inequality_constraints::InequalityConstraints{T, nx, nu, ng, npi},
+function build_ocp(N::Int64, stage_objective::AbstractStageObjective{nx, nu, nps},
+    term_objective::AbstractTerminalObjective{nx, npt},
+    dynamics::AbstractDynamics{nx, nu, npd},
+    inequality_constraints::AbstractInequalityConstraints{T, nx, nu, ng, npi},
     control_limits::ControlLimits{T, nu};
     parameters::OCPParameters{T, nps, npt, npd, 0, npi}=OCPParameters(T)
     ) where {T<:Real, nx, nu, ng, nps, npt, npd, npi}
@@ -60,9 +62,10 @@ function build_ocp(N::Int64, stage_objective::Objective{nx, nu, nps},
         parameters=parameters)
 end
 
-function build_ocp(N::Int64, stage_objective::Objective{nx, nu, nps},
-    term_objective::TerminalObjective{nx, npt}, dynamics::Dynamics{nx, nu, npd},
-    equality_constraints::EqualityConstraints{nx, nu, nh, npe},
+function build_ocp(N::Int64, stage_objective::AbstractStageObjective{nx, nu, nps},
+    term_objective::AbstractTerminalObjective{nx, npt},
+    dynamics::AbstractDynamics{nx, nu, npd},
+    equality_constraints::AbstractEqualityConstraints{nx, nu, nh, npe},
     control_limits::ControlLimits{T, nu};
     parameters::OCPParameters{T, nps, npt, npd, npe, 0}=OCPParameters(T)
     ) where {T<:Real, nx, nu, nh, nps, npt, npd, npe}
@@ -72,8 +75,9 @@ function build_ocp(N::Int64, stage_objective::Objective{nx, nu, nps},
         parameters=parameters)
 end
 
-function build_ocp(N::Int64, stage_objective::Objective{nx, nu, nps},
-    term_objective::TerminalObjective{nx, npt}, dynamics::Dynamics{nx, nu, npd},
+function build_ocp(N::Int64, stage_objective::AbstractStageObjective{nx, nu, nps},
+    term_objective::AbstractTerminalObjective{nx, npt},
+    dynamics::AbstractDynamics{nx, nu, npd},
     control_limits::ControlLimits{T, nu};
     parameters::OCPParameters{T, nps, npt, npd, 0, 0}=OCPParameters(T)
     ) where {T<:Real, nx, nu, nps, npt, npd}

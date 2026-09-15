@@ -2,6 +2,8 @@
     Double pendulum
 """
 
+using StaticArrays
+
 struct DoublePendulum{T}
     nq::Int 
     nu::Int 
@@ -24,13 +26,13 @@ struct DoublePendulum{T}
 end
 
 function kinematics(model::DoublePendulum, x)
-    [model.l1 * sin(x[1]) + model.l2 * sin(x[1] + x[2]),
-     -1.0 * model.l1 * cos(x[1]) - model.l2 * cos(x[1] + x[2])]
+    return @SVector [
+        model.l1 * sin(x[1]) + model.l2 * sin(x[1] + x[2]),
+        -model.l1 * cos(x[1]) - model.l2 * cos(x[1] + x[2])]
 end
 
 function kinematics_elbow(model::DoublePendulum, x)
-    [model.l1 * sin(x[1]),
-     -1.0 * model.l1 * cos(x[1])]
+    return @SVector [model.l1 * sin(x[1]), -model.l1 * cos(x[1])]
 end
 
 function M_func(model::DoublePendulum, q)
@@ -41,8 +43,7 @@ function M_func(model::DoublePendulum, q)
 
     c = model.I2
 
-    [a b;
-     b c]
+    return @SMatrix [a b; b c]
 end
 
 function τ_g_func(model::DoublePendulum, x)
@@ -52,7 +53,7 @@ function τ_g_func(model::DoublePendulum, x)
 
     b = -1.0 * model.m2 * model.g * model.lc2 * sin(x[1] + x[2])
 
-    [a, b]
+    return SVector(a, b)
 end
 
 function C̃_func(model::DoublePendulum, q, q̇)
@@ -61,12 +62,11 @@ function C̃_func(model::DoublePendulum, q, q̇)
     c = model.m2 * model.l1 * model.lc2 * sin(q[2]) * q̇[1]
     d = 0.0
 
-    [a b;
-     c d]
+    return @SMatrix [a b; c d]
 end
 
 function B_func(model::DoublePendulum, x)
-    [0.0; 1.0]
+    return @SVector [0.0, 1.0]
 end
 
 function C_func(model::DoublePendulum, q, q̇)
@@ -74,11 +74,11 @@ function C_func(model::DoublePendulum, q, q̇)
 end
 
 function ϕ_func(model, q)
-    [0.5 * π - q[2], q[2] + 0.5 * π]
+    return @SVector [0.5 * π - q[2], q[2] + 0.5 * π]
 end
 
 function P_func(model, q)
-    [0.0 -1.0; 0.0 1.0]
+    return @SMatrix [0.0 -1.0; 0.0 1.0]
 end
 
 function manipulator_fd(model::DoublePendulum{T}, Δ , q⁻, q, q⁺, τ, λ) where T
@@ -101,19 +101,17 @@ function implicit_contact_dynamics(model::DoublePendulum{T}, x, u, Δ, μ=0.0) w
     nτ = model.nu
     nc = model.nc
 
-    q⁻ = x[1:nq]
-    q = x[nq .+ (1:nq)]
-    q⁺ = u[nτ .+ (1:nq)]
+    q⁻ = SVector(x[1], x[2])
+    q = SVector(x[3], x[4])
+    q⁺ = SVector(u[2], u[3])
 
     τ = u[nτ]
-    λ = u[(nτ + nq) .+ (1:nc)]
-    s = u[(nτ + nq + nc) .+ (1:nc)]
-    
-    [
-        manipulator_fd(model, Δ , q⁻, q, q⁺, τ, λ);
-        (s .- ϕ_func(model, q⁺));
-        λ .* s .- μ;
-    ]
+    λ = SVector(u[4], u[5])
+    s = SVector(u[6], u[7])
+    residual = manipulator_fd(model, Δ, q⁻, q, q⁺, τ, λ)
+    gap = s - ϕ_func(model, q⁺)
+    complementarity = λ .* s .- μ
+    return SVector(residual..., gap..., complementarity...)
 end
 
 function implicit_contact_dynamics_slack(model::DoublePendulum{T}, x, u, Δ) where T
@@ -121,20 +119,18 @@ function implicit_contact_dynamics_slack(model::DoublePendulum{T}, x, u, Δ) whe
     nτ = model.nu
     nc = model.nc
 
-    q⁻ = x[1:nq]
-    q = x[nq .+ (1:nq)]
-    q⁺ = u[nτ .+ (1:nq)]
+    q⁻ = SVector(x[1], x[2])
+    q = SVector(x[3], x[4])
+    q⁺ = SVector(u[2], u[3])
 
     τ = u[nτ]
-    λ = u[(nτ + nq) .+ (1:nc)]
-    s = u[(nτ + nq + nc) .+ (1:nc)]
-    sc = u[(nτ + nq + 2 * nc) .+ (1:nc)]
-
-    [
-        manipulator_fd(model, Δ , q⁻, q, q⁺, τ, λ);
-        (s .- ϕ_func(model, q⁺));
-        λ .* s - sc;
-    ]
+    λ = SVector(u[4], u[5])
+    s = SVector(u[6], u[7])
+    sc = SVector(u[8], u[9])
+    residual = manipulator_fd(model, Δ, q⁻, q, q⁺, τ, λ)
+    gap = s - ϕ_func(model, q⁺)
+    complementarity = λ .* s - sc
+    return SVector(residual..., gap..., complementarity...)
 end
 
 
@@ -162,7 +158,7 @@ function acrobot_explicit(model::DoublePendulum{T}, x, u) where T
 
         c = inertia2
 
-        return [a b; b c]
+        return @SMatrix [a b; b c]
     end
 
     function Minv(x) 
@@ -171,7 +167,7 @@ function acrobot_explicit(model::DoublePendulum{T}, x, u) where T
         b = m[1, 2] 
         c = m[2, 1] 
         d = m[2, 2]
-        1.0 / (a * d - b * c) * [d -b;-c a]
+        return 1.0 / (a * d - b * c) * @SMatrix [d -b; -c a]
     end
 
     function τ(x)
@@ -181,7 +177,7 @@ function acrobot_explicit(model::DoublePendulum{T}, x, u) where T
 
         b = -1.0 * mass2 * gravity * lengthcom2 * sin(x[1] + x[2])
 
-        return [a; b]
+        return SVector(a, b)
     end
 
     function C(x)
@@ -190,18 +186,18 @@ function acrobot_explicit(model::DoublePendulum{T}, x, u) where T
         c = mass2 * length1 * lengthcom2 * sin(x[2]) * x[3]
         d = 0.0
 
-        return [a b; c d]
+        return @SMatrix [a b; c d]
     end
 
     function B(x)
-        [0.0; 1.0]
+        return @SVector [0.0, 1.0]
     end
 
-    q = view(x, 1:2)
-    v = view(x, 3:4)
+        q = SVector(x[1], x[2])
+        v = SVector(x[3], x[4])
 
     qdd = Minv(q) * (-1.0 * C(x) * v
-            + τ(q) + B(q) * u[1] - [friction1; friction2] .* v)
+            + τ(q) + B(q) * u[1] - SVector(friction1, friction2) .* v)
 
-    return [x[3]; x[4]; qdd[1]; qdd[2]]
+        return SVector(x[3], x[4], qdd[1], qdd[2])
 end

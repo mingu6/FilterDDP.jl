@@ -11,7 +11,7 @@ verbose = true
 n_benchmark = 10
 
 T = Float64
-Δ = 0.01
+const Δ = 0.01
 N = 101
 x1 = @SVector zeros(T, 2)
     
@@ -23,15 +23,15 @@ options = Options{T}(verbose=verbose, optimality_tolerance=1e-7)
 
 results = Vector{Vector{Any}}()
 
-dynamics = Dynamics((x, u) -> x + Δ * [x[2], u[1]], nx, nu)
-xN = T[1.0; 0.0]
+const xN = @SVector T[1.0, 0.0]
+dynamics = Dynamics((x, u) -> x + Δ * SVector(x[2], u[1]), nx, nu)
 stage_objective = Objective(
     (x, u) -> Δ * (2.0 * u[2] - u[1] * x[2]), nx, nu)
 terminal_objective = TerminalObjective(
     x -> 500.0 * dot(x - xN, x - xN), nx)
 equalities = EqualityConstraints(nx, nu)
 inequalities = InequalityConstraints(
-    (x, u) -> [u[2] - u[1] * x[2]],
+    (x, u) -> SVector(u[2] - u[1] * x[2]),
     nx, nu, @SVector([0.0]), @SVector([Inf]))
 control_limits = ControlLimits(
     SVector{nu, T}([-10.0, 0.0]), SVector{nu, T}([10.0, Inf]))

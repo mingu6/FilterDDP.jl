@@ -1,11 +1,13 @@
 name = "FilterDDP"
 uuid = "3fc7acb0-3ec8-433f-906a-2d1e86d217d2"
-version = "0.6.0"
+version = "0.9.0"
 authors = ["Mingda Xu"]
 
 [deps]
 Crayons = "a8cc5b0e-0ffa-5ad4-8c14-923d3ee1735f"
+DiffResults = "163ba53b-c6d8-5494-b064-1a9d43ac40c5"
 FastLapackInterface = "29a986be-02c6-4525-aec4-84b980013641"
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 RuntimeGeneratedFunctions = "7e49a35a-f44a-4d26-94aa-eba1b4ca6b47"
@@ -14,7 +16,9 @@ Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
 
 [compat]
 Crayons = "4.1.1"
+DiffResults = "1.1.0"
 FastLapackInterface = "2.1.1"
+ForwardDiff = "1.4"
 LinearAlgebra = "1.12.0"
 RuntimeGeneratedFunctions = "0.5.17"
 StaticArrays = "1.9.18"

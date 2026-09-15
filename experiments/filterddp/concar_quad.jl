@@ -12,8 +12,8 @@ verbose = true
 
 T = Float64
 N = 101
-Δ = 0.05
-r_car = 0.02
+const Δ = 0.05
+const r_car = 0.02
 n_ocp = 100
 
 const nx::Int64 = 4
@@ -26,12 +26,12 @@ options = Options{T}(verbose=verbose, optimality_tolerance=1e-7)
 results = Vector{Vector{Any}}()
 params = Vector{Vector{T}}()
 
-xN = T[1.0; 1.0; π / 4; 0.0]
-no = 4
+const xN = @SVector T[1.0; 1.0; π / 4; 0.0]
+const no = 4
 const npi::Int64 = 12
 
 function continuous_dynamics(x, u)
-    return [x[4] * cos(x[3]); x[4] * sin(x[3]); u[2]; u[1]]
+    return SVector(x[4] * cos(x[3]), x[4] * sin(x[3]), u[2], u[1])
 end
 
 function midpoint_dynamics(x, u)
@@ -40,19 +40,17 @@ function midpoint_dynamics(x, u)
     return x + Δ * k2
 end
 
-stage_cost = (x, u) -> begin
-    slack = u[2 .+ (1:no)]
-    Δ * dot(u[1:2] .* [5.0, 1.0], u[1:2]) + 1000.0 * dot(slack, slack)
-end
+stage_cost = (x, u) ->
+    Δ * (5.0 * u[1]^2 + u[2]^2) +
+    1000.0 * (u[3]^2 + u[4]^2 + u[5]^2 + u[6]^2)
 terminal_cost = x -> 200.0 * dot(x - xN, x - xN)
 
 function obstacle_constraints(x, u, p)
-    return [
-        (p[3 * obstacle] + r_car)^2 -
-            (x[1] - p[3 * obstacle - 2])^2 -
-            (x[2] - p[3 * obstacle - 1])^2 - u[2 + obstacle]
-        for obstacle = 1:no
-    ]
+    return SVector(
+        (p[3] + r_car)^2 - (x[1] - p[1])^2 - (x[2] - p[2])^2 - u[3],
+        (p[6] + r_car)^2 - (x[1] - p[4])^2 - (x[2] - p[5])^2 - u[4],
+        (p[9] + r_car)^2 - (x[1] - p[7])^2 - (x[2] - p[8])^2 - u[5],
+        (p[12] + r_car)^2 - (x[1] - p[10])^2 - (x[2] - p[11])^2 - u[6])
 end
 
 dynamics = Dynamics(midpoint_dynamics, nx, nu)

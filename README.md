@@ -20,21 +20,19 @@ FilterDDP can solve OCPs of the form
 \end{array}
 ```
 where $\mathbf{x} = (x_1, \dots, x_N)$ is the state trajectory and $\mathbf{u} = (u_1, \dots, u_{N-1})$ is the control trajectory. Equality, inequality, and control-bound definitions use `EqualityConstraints`, `InequalityConstraints`, and `ControlLimits`, respectively.
-- All derivatives, including Jacobians and Hessians are automatically generated using [Symbolics.jl](https://github.com/JuliaSymbolics/Symbolics.jl) for user-provided costs/objectives, constraints, and dynamics.
+- Derivatives can be computed using either [Symbolics.jl](https://github.com/JuliaSymbolics/Symbolics.jl) or [ForwardDiff.jl](https://github.com/JuliaDiff/ForwardDiff.jl) for user-provided costs/objectives, constraints, and dynamics. Both are allocation free and fast.
 
 - Linear algebra is implemented using statically-typed arrays through [StaticArrays.jl](https://github.com/JuliaArrays/StaticArrays.jl). This yields extremely fast solve times for sufficiently small problem sizes (with respect to number of controls, states and constraints).
 
-- For an implementation of FilterDDP using allocation-free LAPACK operations (instead of StaticArrays.jl), please see the sister repository [FilterDDPLAPACK.jl](https://github.com/mingu6/FilterDDPLAPACK.jl). This implementation will likely work better for larger size OCPs with more states, controls and constraints such as the contact dynamics cartpole experiment.
-
 ## Nonlinear Inequality Constraints
 
-Nonlinear inequalities $b_g^L \leq g(x_t,u_t) \leq b_g^U$ are represented by `InequalityConstraints`. FilterDDP introduces solver-owned slacks
+Nonlinear inequalities $b_g^L \leq g(x_t,u_t) \leq b_g^U$ are represented by `InequalityConstraints`. FilterDDP in practice adds a slack variable per inequality constraint and transcribes the inequality constraint into a equality constraint and a bound constraint given by
 
 ```math
 g(x_t,u_t)-s_t=0, \qquad b_g^L \leq s_t \leq b_g^U.
 ```
 
-The slacks are not appended to the user control. Objectives and dynamics continue to receive only `(x, u)`, while `get_slack_trajectory` and `get_slack_feedback` expose the internal slack solution and policy. For maximum performance, control and slack bounds are eliminated in the stage-wise KKT systems.
+The slacks are handled efficiently within the algorithm (in the stage-wise KKT block matrices, the slacks are eliminated). For debugging purposes, it is possible to access slack variables via `get_slack_trajectory` and `get_slack_feedback`.
 
 ## Automatic NLP Scaling
 
@@ -46,11 +44,11 @@ options = Options{Float64}(
     nlp_scaling_max_gradient=100.0)
 ```
 
-The default is `nlp_scaling=false`, though consider turning it on if you run into numerical issues that may be due to problem scaling. When scaling is enabled, `solver.data.primal_inf` is the scaled infeasibility used by the stopping test; `solver.data.primal_inf_raw` retains the maximum constraint violation in the problem's original units. The reported objective remains in its original units.
+The default is `nlp_scaling=false`, though consider turning it on if you run into numerical issues that may be due to problem scaling. Note that when scaling is enabled, `solver.data.primal_inf` is the scaled infeasibility used by the stopping test; `solver.data.primal_inf_raw` retains the maximum constraint violation in the problem's original units. The reported objective remains in its original units.
 
 ## Fixed OCP Parameters
 
-Coefficients that vary between OCP instances but are not decision variables can be passed through statically sized parameter vectors. Parameterized stage objectives, dynamics, and constraints accept `(x, u, p)`, while terminal objectives accept `(x, p)`. The parameter dimension is supplied as the final constructor argument, and derivatives are not taken with respect to the parameters.
+Coefficients that vary between OCP instances but are not decision variables can be passed through statically sized parameter vectors. Parameterized stage objectives, dynamics, and constraints accept `(x, u, p)`, while terminal objectives accept `(x, p)`. The parameter dimension is supplied as the final constructor argument, and derivatives are not taken with respect to the parameters during the OCP solve. For example,
 
 ```julia
 npo = 1
@@ -72,8 +70,6 @@ parameters = OCPParameters(
 ocp = build_ocp(N, stage_objective, terminal_objective, dynamics,
     equalities, inequalities, control_limits; parameters=parameters)
 ```
-
-The horizon contains `N` state knots and `N-1` control stages. Stage objectives, dynamics, constraints, slacks, and feedback policies are defined for `t = 1:N-1`; the state-only terminal objective is evaluated at `x[N]`. Accordingly, `solve!` accepts `N-1` initial controls and `get_trajectory` returns `N` states and `N-1` controls.
 
 ## Unconstrained (and Bound Constrained) Differential Dynamic Programming
 
@@ -125,12 +121,12 @@ x1 = @SVector zeros(2)
 
 # ## Define the discrete-time dynamics
 
-f = (x, u) -> x + 0.01 * [x[2], u[1]]
+f = (x, u) -> x + 0.01 * @SVector [x[2], u[1]]
 dyn = Dynamics(f, nx, nu)
 
 # ## Define the stage and terminal objective functions
 
-xN = [1.0, 0.0]
+xN = @SVector [1.0, 0.0]
 l = (x, u) -> 0.01 * (2.0 * u[2] - u[1] * x[2])
 lN = x -> 500.0 * (x - xN)' * (x - xN)
 stage_obj = Objective(l, nx, nu)
@@ -140,7 +136,7 @@ term_obj = TerminalObjective(lN, nx)
 
 equalities = EqualityConstraints(nx, nu)
 inequalities = InequalityConstraints(
-    (x, u) -> [u[2] - u[1] * x[2]],
+    (x, u) -> @SVector [u[2] - u[1] * x[2]],
     nx, nu, @SVector([0.0]), @SVector([Inf]))
 
 # ## Define control limits (hard constraints)

@@ -12,7 +12,7 @@ benchmark = false
 verbose = true
 
 T = Float64
-Δ = 0.05
+const Δ = 0.05
 N = 101
 n_ocp = 100
 
@@ -30,67 +30,51 @@ params = Vector{Vector{T}}()
 const npe::Int64 = 6
 const nq::Int64 = 2
 const nF::Int64 = 1
-qN = T[0.0; π]
+const qN = @SVector T[0.0; π]
 
 function cartpole_model(p)
     return Cartpole{eltype(p)}(2, 1, 2,
-        p[1], p[2], p[3], p[4], [p[5], p[6]])
+    p[1], p[2], p[3], p[4], SVector(p[5], p[6]))
 end
 
-state_dynamics = (x, u) -> [x[nq .+ (1:nq)]; u[nF .+ (1:nq)]]
+state_dynamics = (x, u) -> SVector(x[3], x[4], u[2], u[3])
 
 function stage_cost(x, u)
     F = u[1]
-    β1 = u[(nF + nq) .+ (1:2)]
-    β2 = u[(nF + nq + 2) .+ (1:2)]
-    η1 = u[(nF + nq + 4) .+ (1:2)]
-    η2 = u[(nF + nq + 6) .+ (1:2)]
-    ψ = u[(nF + nq + 8) .+ (1:2)]
-    s = u[(nF + nq + 10) .+ (1:2)]
-    return 0.01 * Δ * F * F + sum([ψ .* s; β1 .* η1; β2 .* η2])
+    return 0.01 * Δ * F * F + u[12] * u[14] + u[13] * u[15] +
+        u[4] * u[8] + u[5] * u[9] + u[6] * u[10] + u[7] * u[11]
 end
 
 function terminal_cost(x)
-    q⁻ = x[1:nq]
-    q = x[nq .+ (1:nq)]
-    q̇ᵐ⁻ = (q - q⁻) ./ Δ
-    return 200.0 * dot(q̇ᵐ⁻, q̇ᵐ⁻) +
-    700.0 * dot(q - qN, q - qN)
+    q̇₁ = (x[3] - x[1]) / Δ
+    q̇₂ = (x[4] - x[2]) / Δ
+    return 200.0 * (q̇₁ * q̇₁ + q̇₂ * q̇₂) +
+        700.0 * ((x[3] - qN[1])^2 + (x[4] - qN[2])^2)
 end
 
 function contact_equalities(x, u, p)
     model = cartpole_model(p)
-    q⁻ = x[1:nq]
-    q = x[nq .+ (1:nq)]
-    q⁺ = u[nF .+ (1:nq)]
+    q⁻ = SVector(x[1], x[2])
+    q = SVector(x[3], x[4])
+    q⁺ = SVector(u[2], u[3])
     q̇ᵐ⁺ = (q⁺ - q) / Δ
     F = u[nF]
-    β1 = u[(nF + nq) .+ (1:2)]
-    β2 = u[(nF + nq + 2) .+ (1:2)]
-    η1 = u[(nF + nq + 4) .+ (1:2)]
-    η2 = u[(nF + nq + 6) .+ (1:2)]
-    ψ = u[(nF + nq + 8) .+ (1:2)]
-    s = u[(nF + nq + 10) .+ (1:2)]
-    λ = [β1[1] - β1[2]; β2[1] - β2[2]]
+    λ = SVector(u[4] - u[5], u[6] - u[7])
     γ1 = p[5] * (p[2] + p[1]) * p[4]
     γ2 = p[6] * p[2] * p[4] * p[3]
-    return [
-        manipulator_fd(model, Δ, q⁻, q, q⁺, F, λ);
-        [q̇ᵐ⁺[1]; -q̇ᵐ⁺[1]] .+ ψ[1] - η1;
-        [q̇ᵐ⁺[2]; -q̇ᵐ⁺[2]] .+ ψ[2] - η2;
-        γ1 - sum(β1) - s[1];
-        γ2 - sum(β2) - s[2]
-    ]
+    residual = manipulator_fd(model, Δ, q⁻, q, q⁺, F, λ)
+    return SVector(
+        residual[1], residual[2],
+        q̇ᵐ⁺[1] + u[12] - u[8], -q̇ᵐ⁺[1] + u[12] - u[9],
+        q̇ᵐ⁺[2] + u[13] - u[10], -q̇ᵐ⁺[2] + u[13] - u[11],
+        γ1 - u[4] - u[5] - u[14], γ2 - u[6] - u[7] - u[15])
 end
 
 function complementarity_constraints(x, u)
-    β1 = u[(nF + nq) .+ (1:2)]
-    β2 = u[(nF + nq + 2) .+ (1:2)]
-    η1 = u[(nF + nq + 4) .+ (1:2)]
-    η2 = u[(nF + nq + 6) .+ (1:2)]
-    ψ = u[(nF + nq + 8) .+ (1:2)]
-    s = u[(nF + nq + 10) .+ (1:2)]
-    return [ψ .* s; β1 .* η1; β2 .* η2]
+    return SVector(
+        u[12] * u[14], u[13] * u[15],
+        u[4] * u[8], u[5] * u[9],
+        u[6] * u[10], u[7] * u[11])
 end
 
 dynamics = Dynamics(state_dynamics, nx, nu)

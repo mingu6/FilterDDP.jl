@@ -1,3 +1,5 @@
+using StaticArrays
+
 struct Cartpole{T}
     # dimensions
     nq::Int # generalized coordinates
@@ -9,33 +11,41 @@ struct Cartpole{T}
     l::T      # length of the pole in m
     g::T      # gravity m/s^2
 
-    friction::Vector{T} # friction coefficients for slider and arm joints
+    friction::SVector{2, T} # friction coefficients for slider and arm joints
+
+    function Cartpole{T}(nq::Int, nu::Int, nc::Int, mc::T, mp::T, l::T, g::T,
+            friction::SVector{2, T}) where T
+        return new{T}(nq, nu, nc, mc, mp, l, g, friction)
+    end
+end
+
+function Cartpole{T}(nq, nu, nc, mc, mp, l, g, friction::AbstractVector) where T
+    return Cartpole{T}(nq, nu, nc, mc, mp, l, g, SVector{2, T}(friction))
 end
 
 function kinematics(model::Cartpole, q)
-    [q[1] + model.l * sin(q[2]); -model.l * cos(q[2])]
+    return @SVector [q[1] + model.l * sin(q[2]), -model.l * cos(q[2])]
 end
 
 function M_func(model::Cartpole, q)
-    H = [model.mc + model.mp model.mp * model.l * cos(q[2]);
-		 model.mp * model.l * cos(q[2]) model.mp * model.l^2.0]
-    return H
+    return @SMatrix [
+        model.mc + model.mp model.mp * model.l * cos(q[2]);
+        model.mp * model.l * cos(q[2]) model.mp * model.l^2.0]
 end
 
 function B_func(model::Cartpole, q)
-    [1.0; 0.0]
+    return @SVector [1.0, 0.0]
 end
 
 function P_func(model::Cartpole, x)
-    [1.0 0.0;
-     0.0 1.0]
+    return @SMatrix [1.0 0.0; 0.0 1.0]
 end
 
 function C_func(model::Cartpole, q, q̇)
-    C = [0.0 -1.0 * model.mp * q̇[2] * model.l * sin(q[2]);
-	 	 0.0 0.0]
-    G = [0.0,
-		 -model.mp * model.g * model.l * sin(q[2])]
+    C = @SMatrix [
+        0.0 -model.mp * q̇[2] * model.l * sin(q[2]);
+        0.0 0.0]
+    G = @SVector [0.0, -model.mp * model.g * model.l * sin(q[2])]
     return C * q̇ - G
 end
 

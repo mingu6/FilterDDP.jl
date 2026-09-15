@@ -13,7 +13,7 @@ verbose = false
 use_control_limits = false
 
 T = Float64
-Δ = 0.05
+const Δ = 0.05
 N = 101
 n_ocp = 100
 
@@ -29,8 +29,11 @@ results = Vector{Vector{Any}}()
 params = Vector{Vector{T}}()
 
 const npd::Int64 = 11
-xN = T[π; 0.0; 0.0; 0.0]
-Q = diagm(T[1.0, 1.0, 0.1, 0.1])
+const xN = @SVector T[π, 0.0, 0.0, 0.0]
+const Q = @SMatrix T[1.0 0.0 0.0 0.0;
+					  0.0 1.0 0.0 0.0;
+					  0.0 0.0 0.1 0.0;
+					  0.0 0.0 0.0 0.1]
 
 function double_pendulum(p)
 	return DoublePendulum{eltype(p)}(2, 1, 2,
@@ -38,13 +41,19 @@ function double_pendulum(p)
 		p[9], p[10], p[11])
 end
 
-acrobot_dynamics = (x, u, p) ->
-	x + Δ .* acrobot_explicit(double_pendulum(p), x, u)
+function acrobot_dynamics(x, u, p)
+	model = double_pendulum(p)
+	k1 = acrobot_explicit(model, x, u)
+	k2 = acrobot_explicit(model, x + 0.5 * Δ * k1, u)
+	k3 = acrobot_explicit(model, x + 0.5 * Δ * k2, u)
+	k4 = acrobot_explicit(model, x + Δ * k3, u)
+	return x + (Δ / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+end
 stage_cost = (x, u) ->
 	Δ * (2.0 * dot(u, u) + dot(x - xN, Q * (x - xN)))
 terminal_cost = x -> 1000.0 * dot(x - xN, Q * (x - xN))
 
-dynamics = Dynamics(acrobot_dynamics, nx, nu, npd)
+dynamics = Dynamics(acrobot_dynamics, nx, nu, npd; backend=ForwardDiffBackend())
 stage_objective = Objective(stage_cost, nx, nu)
 terminal_objective = TerminalObjective(terminal_cost, nx)
 equalities = EqualityConstraints(nx, nu)

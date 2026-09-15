@@ -7,6 +7,8 @@ using Crayons
 using FastLapackInterface
 using StaticArrays
 using RuntimeGeneratedFunctions
+import DiffResults
+import ForwardDiff
 RuntimeGeneratedFunctions.init(@__MODULE__)
 
 @inline evaluate(f, x, u, ::SVector{0}) = f(x, u)
@@ -16,6 +18,7 @@ RuntimeGeneratedFunctions.init(@__MODULE__)
 @inline evaluate(f, x, ::SVector{0}) = f(x)
 @inline evaluate(f, x, p) = f(x, p)
 
+include(joinpath("ocp", "derivatives.jl"))
 include(joinpath("ocp", "objective.jl"))
 include(joinpath("ocp", "dynamics.jl"))
 include(joinpath("ocp", "control_limits.jl"))
@@ -31,6 +34,8 @@ include("solve.jl")
 
 export Objective
 export TerminalObjective
+export SymbolicsBackend
+export ForwardDiffBackend
 export EqualityConstraints
 export InequalityConstraints
 export Dynamics

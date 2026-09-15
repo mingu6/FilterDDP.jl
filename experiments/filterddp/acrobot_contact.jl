@@ -12,7 +12,7 @@ benchmark = false
 verbose = true
 
 T = Float64
-Δ = 0.05
+const Δ = 0.05
 N = 101
 n_ocp = 100
 
@@ -22,7 +22,7 @@ const nu::Int64 = 7
 include("../models/acrobot.jl")
 visualise && include("../visualise/visualise_acrobot.jl")
 
-qN = SA[π; 0.0]
+const qN = SA[π; 0.0]
 
 options = Options{T}(verbose=verbose, optimality_tolerance=1e-7)
 
@@ -39,38 +39,35 @@ function double_pendulum(p)
 		p[9], p[10], p[11])
 end
 
-state_dynamics = (x, u) -> [x[nq .+ (1:nq)]; u[nτ .+ (1:nq)]]
+state_dynamics = (x, u) -> SVector(x[3], x[4], u[2], u[3])
 
 function stage_cost(x, u)
 	τ = u[1]
-	complementarity = u[(nτ + nq) .+ (1:2)] .* u[(nτ + nq + 2) .+ (1:2)]
-	return 0.01 * Δ * τ * τ + 2.0 * sum(complementarity)
+	return 0.01 * Δ * τ * τ + 2.0 * (u[4] * u[6] + u[5] * u[7])
 end
 
 function terminal_cost(x)
-	q⁻ = x[1:nq]
-	q = x[nq .+ (1:nq)]
-	q̇ᵐ⁻ = (q - q⁻) ./ Δ
-	return 200.0 * dot(q̇ᵐ⁻, q̇ᵐ⁻) +
-		700.0 * dot(q - qN, q - qN)
+	q̇₁ = (x[3] - x[1]) / Δ
+	q̇₂ = (x[4] - x[2]) / Δ
+	return 200.0 * (q̇₁ * q̇₁ + q̇₂ * q̇₂) +
+		700.0 * ((x[3] - qN[1])^2 + (x[4] - qN[2])^2)
 end
 
 function contact_equalities(x, u, p)
 	model = double_pendulum(p)
-	q⁻ = x[1:nq]
-	q = x[nq .+ (1:nq)]
-	q⁺ = u[nτ .+ (1:nq)]
+	q⁻ = SVector(x[1], x[2])
+	q = SVector(x[3], x[4])
+	q⁺ = SVector(u[2], u[3])
 	τ = u[nτ]
-	λ = u[(nτ + nq) .+ (1:2)]
-	s = u[(nτ + nq + 2) .+ (1:2)]
-	return [
-		manipulator_fd(model, Δ, q⁻, q, q⁺, τ, λ);
-		s .- ϕ_func(model, q⁺)
-	]
+	λ = SVector(u[4], u[5])
+	s = SVector(u[6], u[7])
+	residual = manipulator_fd(model, Δ, q⁻, q, q⁺, τ, λ)
+	gap = s - ϕ_func(model, q⁺)
+	return SVector(residual[1], residual[2], gap[1], gap[2])
 end
 
 complementarity_constraints = (x, u) ->
-	u[(nτ + nq) .+ (1:2)] .* u[(nτ + nq + 2) .+ (1:2)]
+	SVector(u[4] * u[6], u[5] * u[7])
 
 dynamics = Dynamics(state_dynamics, nx, nu)
 stage_objective = Objective(stage_cost, nx, nu)

@@ -12,7 +12,7 @@ benchmark = false
 verbose = true
 
 T = Float64
-Δ = 0.04
+const Δ = 0.04
 N = 101
 n_ocp = 100
 
@@ -38,45 +38,48 @@ params = Vector{Vector{T}}()
 const npd::Int64 = 2
 const npe::Int64 = 1
 const npi::Int64 = 4
-xN = T[0.3, 0.4, 1.5 * π, 0.0]
+const xN = @SVector T[0.3, 0.4, 1.5 * π, 0.0]
 force_lim = T(0.3)
 vel_lim = T(3.0)
-r_push = T(0.01)
+const r_push = T(0.01)
 
 function rotation_matrix(θ)
-    return [[cos(θ); sin(θ); 0] [-sin(θ); cos(θ); 0] [0.0; 0.0; 1.0]]
+    return @SMatrix [cos(θ) -sin(θ) 0.0; sin(θ) cos(θ) 0.0; 0.0 0.0 1.0]
 end
 
 function contact_jacobian(ϕ, p)
-    return [[1.0; 0.0] [0.0; 1.0] [p[1] / 2 * tan(ϕ); -p[1] / 2]]
+    return @SMatrix [1.0 0.0 p[1] / 2 * tan(ϕ); 0.0 1.0 -p[1] / 2]
 end
 
 function pushing_dynamics(x, u, p)
     θ = x[3]
     ϕ = x[4]
-    limit_surface = [one(p[2]); one(p[2]); p[2]^(-2)]
+    limit_surface = SVector(one(p[2]), one(p[2]), p[2]^(-2))
     velocity = rotation_matrix(θ) *
-        (limit_surface .* (transpose(contact_jacobian(ϕ, p)) * u[1:2]))
-    return x + Δ .* [velocity; u[3] - u[4]]
+        (limit_surface .* (transpose(contact_jacobian(ϕ, p)) * SVector(u[1], u[2])))
+    return x + Δ * SVector(velocity[1], velocity[2], velocity[3], u[3] - u[4])
 end
 
-complementarity = (x, u) -> [u[5] * u[3]; u[6] * u[4]]
-stage_cost = (x, u) ->
-    1e-2 * dot(u[1:2], u[1:2]) + 2.0 * sum(complementarity(x, u)) + 2.0 * u[8]
+complementarity = (x, u) -> SVector(u[5] * u[3], u[6] * u[4])
+function stage_cost(x, u)
+    force = SVector(u[1], u[2])
+    complementarity = SVector(u[5] * u[3], u[6] * u[4])
+    return 1e-2 * dot(force, force) +
+        2.0 * sum(complementarity) + 2.0 * u[8]
+end
 terminal_cost = x -> 20.0 * dot(x - xN, x - xN)
 
 function contact_equalities(x, u, p)
-    return [
-        p[1] * u[1] - u[2] - u[5];
-        p[1] * u[1] + u[2] - u[6];
-        x[4] - u[7]
-    ]
+    return SVector(
+        p[1] * u[1] - u[2] - u[5],
+        p[1] * u[1] + u[2] - u[6],
+        x[4] - u[7])
 end
 
 function pushing_inequalities(x, u, p)
-    xdiff = x[1:2] - p[1:2]
+    xdiff = SVector(x[1] - p[1], x[2] - p[2])
     obstacle_constraint = (p[3] + p[4])^2 - dot(xdiff, xdiff) - u[8]
-    return [complementarity(x, u); obstacle_constraint]
+    return SVector(u[5] * u[3], u[6] * u[4], obstacle_constraint)
 end
 
 dynamics = Dynamics(pushing_dynamics, nx, nu, npd)

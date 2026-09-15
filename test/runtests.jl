@@ -3,6 +3,21 @@ using LinearAlgebra
 using StaticArrays
 using Test
 
+function bundle_isapprox(left, right)
+    return propertynames(left) == propertynames(right) &&
+        all(isapprox(getproperty(left, name), getproperty(right, name);
+            rtol=1.0e-12, atol=1.0e-12) for name in propertynames(left))
+end
+
+component_derivative_allocations(component, args...) =
+    @allocated FilterDDP.component_derivatives(component, args...)
+
+component_first_order_allocations(component, args...) =
+    @allocated FilterDDP.component_first_order(component, args...)
+
+component_value_allocations(component, args...) =
+    @allocated FilterDDP.component_value(component, args...)
+
 @testset "constraint notation" begin
     equalities = EqualityConstraints((x, u) -> [x[1]^2 + u[1]], 1, 1)
     x = @SVector [2.0]
@@ -64,7 +79,7 @@ end
         inequalities, control_limits)
     solver = Solver(ocp; options=Options{Float64}(verbose=false))
 
-    @test ocp.equality_constraints isa EqualityConstraints{1, 1, 0, 0}
+    @test ocp.equality_constraints isa FilterDDP.SymbolicsEqualityConstraints{1, 1, 0, 0}
     status = solve!(solver, @SVector([0.0]),
         [@SVector([0.5]) for _ in 1:horizon-1])
     _, controls = get_trajectory(solver)
@@ -106,8 +121,8 @@ end
         control_limits)
 
     @test ocp.control_limits === control_limits
-    @test ocp.equality_constraints isa EqualityConstraints{1, 1, 0}
-    @test ocp.inequality_constraints isa InequalityConstraints{Float64, 1, 1, 0}
+    @test ocp.equality_constraints isa FilterDDP.SymbolicsEqualityConstraints{1, 1, 0}
+    @test ocp.inequality_constraints isa FilterDDP.SymbolicsInequalityConstraints{Float64, 1, 1, 0}
 
     solver = Solver(ocp; options=Options{Float64}(verbose=false))
     status = solve!(solver, @SVector([0.0]),
@@ -231,7 +246,7 @@ end
     equality_only_ocp = build_ocp(2, stage_objective, terminal_objective,
         dynamics, equalities, control_limits; parameters=equality_only_parameters)
     @test equality_only_ocp.inequality_constraints isa
-        InequalityConstraints{Float64, 1, 1, 0, 0}
+        FilterDDP.SymbolicsInequalityConstraints{Float64, 1, 1, 0, 0}
 
     inequality_only_parameters = OCPParameters(
         stage_objective=parameters_1.stage_objective,
@@ -242,7 +257,220 @@ end
     inequality_only_ocp = build_ocp(2, stage_objective, terminal_objective,
         dynamics, inequalities, control_limits; parameters=inequality_only_parameters)
     @test inequality_only_ocp.equality_constraints isa
-        EqualityConstraints{1, 1, 0, 0}
+        FilterDDP.SymbolicsEqualityConstraints{1, 1, 0, 0}
+end
+
+@testset "ForwardDiff derivative backend" begin
+    nx = 2
+    nu = 2
+    stage_function = (x, u, p) ->
+        p[1] * x[1]^2 + sin(x[2]) * u[1] + p[2] * u[2]^4
+    terminal_function = (x, p) -> p[1] * x[1]^2 + cos(x[2])
+    dynamics_function = (x, u, p) -> @SVector [
+        p[1] * x[1]^2 + x[2] * u[1] + u[2]^2,
+        sin(x[2]) + x[1] * u[2] + u[1]^3]
+    equality_function = (x, u, p) -> @SVector [
+        p[1] * x[1]^2 + x[2] * u[1],
+        x[1] * u[2] + u[1]^3]
+    inequality_function = (x, u, p) ->
+        @SVector [sin(x[2]) + x[1] * u[1] + p[1] * u[2]^2]
+
+    x = @SVector [1.2, -0.4]
+    u = @SVector [0.7, -0.2]
+    stage_parameters = @SVector [2.0, 3.0]
+    terminal_parameters = @SVector [2.0]
+    dynamics_parameters = @SVector [2.0]
+    equality_parameters = @SVector [2.0]
+    inequality_parameters = @SVector [2.0]
+    dynamics_multiplier = @SVector [1.5, -0.8]
+    equality_multiplier = @SVector [1.5, -0.8]
+    inequality_multiplier = @SVector [0.6]
+    forwarddiff = ForwardDiffBackend()
+
+    symbolic_stage = Objective(stage_function, nx, nu, 2)
+    forwarddiff_stage = Objective(
+        stage_function, nx, nu, 2; backend=forwarddiff)
+    symbolic_terminal = TerminalObjective(terminal_function, nx, 1)
+    forwarddiff_terminal = TerminalObjective(
+        terminal_function, nx, 1; backend=forwarddiff)
+    symbolic_dynamics = Dynamics(dynamics_function, nx, nu, 1)
+    forwarddiff_dynamics = Dynamics(
+        dynamics_function, nx, nu, 1; backend=forwarddiff)
+    symbolic_equalities = EqualityConstraints(
+        equality_function, nx, nu, 1)
+    forwarddiff_equalities = EqualityConstraints(
+        equality_function, nx, nu, 1; backend=forwarddiff)
+    symbolic_inequalities = InequalityConstraints(
+        inequality_function, nx, nu,
+        @SVector([-Inf]), @SVector([1.0]), 1)
+    forwarddiff_inequalities = InequalityConstraints(
+        inequality_function, nx, nu,
+        @SVector([-Inf]), @SVector([1.0]), 1; backend=forwarddiff)
+    empty_equalities = EqualityConstraints(nx, nu, 0; backend=forwarddiff)
+    empty_inequalities = InequalityConstraints(
+        Float64, nx, nu, 0; backend=forwarddiff)
+
+    @test FilterDDP.component_value(empty_equalities, x, u,
+        SVector{0, Float64}()) == SVector{0, Float64}()
+    @test FilterDDP.component_value(empty_inequalities, x, u,
+        SVector{0, Float64}()) == SVector{0, Float64}()
+    @test_throws ArgumentError EqualityConstraints(
+        nx, nu, -1; backend=forwarddiff)
+    @test_throws ArgumentError InequalityConstraints(
+        Float64, nx, nu, -1; backend=forwarddiff)
+
+    @test bundle_isapprox(
+        FilterDDP.component_first_order(
+            symbolic_stage, x, u, stage_parameters),
+        FilterDDP.component_first_order(
+            forwarddiff_stage, x, u, stage_parameters))
+    symbolic_stage_derivatives = FilterDDP.component_derivatives(
+        symbolic_stage, x, u, stage_parameters)
+    forwarddiff_stage_derivatives = @inferred FilterDDP.component_derivatives(
+        forwarddiff_stage, x, u, stage_parameters)
+    @test bundle_isapprox(
+        symbolic_stage_derivatives, forwarddiff_stage_derivatives)
+
+    symbolic_terminal_derivatives = FilterDDP.component_derivatives(
+        symbolic_terminal, x, terminal_parameters)
+    forwarddiff_terminal_derivatives = @inferred FilterDDP.component_derivatives(
+        forwarddiff_terminal, x, terminal_parameters)
+    @test bundle_isapprox(
+        symbolic_terminal_derivatives, forwarddiff_terminal_derivatives)
+
+    symbolic_dynamics_derivatives = FilterDDP.component_derivatives(
+        symbolic_dynamics, x, u, dynamics_parameters, dynamics_multiplier)
+    forwarddiff_dynamics_derivatives = @inferred FilterDDP.component_derivatives(
+        forwarddiff_dynamics, x, u, dynamics_parameters, dynamics_multiplier)
+    @test bundle_isapprox(
+        symbolic_dynamics_derivatives, forwarddiff_dynamics_derivatives)
+    @test forwarddiff_dynamics_derivatives.yux[1, 2] ≈ dynamics_multiplier[1]
+    @test forwarddiff_dynamics_derivatives.yux[2, 1] ≈ dynamics_multiplier[2]
+
+    symbolic_equality_derivatives = FilterDDP.component_derivatives(
+        symbolic_equalities, x, u, equality_parameters, equality_multiplier)
+    forwarddiff_equality_derivatives = @inferred FilterDDP.component_derivatives(
+        forwarddiff_equalities, x, u, equality_parameters, equality_multiplier)
+    @test bundle_isapprox(
+        symbolic_equality_derivatives, forwarddiff_equality_derivatives)
+    @test forwarddiff_equality_derivatives.yux[1, 2] ≈ equality_multiplier[1]
+    @test forwarddiff_equality_derivatives.yux[2, 1] ≈ equality_multiplier[2]
+
+    @test bundle_isapprox(
+        FilterDDP.component_derivatives(symbolic_inequalities, x, u,
+            inequality_parameters, inequality_multiplier),
+        FilterDDP.component_derivatives(forwarddiff_inequalities, x, u,
+            inequality_parameters, inequality_multiplier))
+
+    @test component_value_allocations(
+        forwarddiff_stage, x, u, stage_parameters) == 0
+    @test component_first_order_allocations(
+        forwarddiff_stage, x, u, stage_parameters) == 0
+    @test component_derivative_allocations(
+        forwarddiff_stage, x, u, stage_parameters) == 0
+    @test component_derivative_allocations(
+        forwarddiff_terminal, x, terminal_parameters) == 0
+    constant_terminal = TerminalObjective(
+        x -> 0.0, nx; backend=forwarddiff)
+    empty_parameters_for_terminal = SVector{0, Float64}()
+    FilterDDP.component_derivatives(
+        constant_terminal, x, empty_parameters_for_terminal)
+    @test component_derivative_allocations(
+        constant_terminal, x, empty_parameters_for_terminal) == 0
+    @test component_value_allocations(
+        forwarddiff_dynamics, x, u, dynamics_parameters) == 0
+    @test component_first_order_allocations(
+        forwarddiff_dynamics, x, u, dynamics_parameters) == 0
+    @test component_derivative_allocations(forwarddiff_dynamics,
+        x, u, dynamics_parameters, dynamics_multiplier) == 0
+    @test component_derivative_allocations(forwarddiff_equalities,
+        x, u, equality_parameters, equality_multiplier) == 0
+    @test component_derivative_allocations(forwarddiff_inequalities,
+        x, u, inequality_parameters, inequality_multiplier) == 0
+
+    large_stage_function = (x, u) ->
+        sum(abs2, x) + sum(sin, u) + x[1] * u[1]
+    large_dynamics_function = (x, u) -> @SVector [
+        x[1] + sum(u),
+        x[2]^2 + u[1] * u[2],
+        sin(x[3]) + u[3]^2,
+        x[4] + x[1] * u[4]]
+    large_x = SVector{4}(ntuple(index -> 0.1 * index, 4))
+    large_u = SVector{15}(ntuple(index -> 0.01 * index, 15))
+    large_multiplier = @SVector [1.0, -0.5, 0.3, 0.8]
+    empty_parameters = SVector{0, Float64}()
+    large_stage = Objective(
+        large_stage_function, 4, 15; backend=forwarddiff)
+    large_dynamics = Dynamics(
+        large_dynamics_function, 4, 15; backend=forwarddiff)
+    FilterDDP.component_derivatives(
+        large_stage, large_x, large_u, empty_parameters)
+    FilterDDP.component_derivatives(
+        large_dynamics, large_x, large_u, empty_parameters, large_multiplier)
+    @test component_derivative_allocations(
+        large_stage, large_x, large_u, empty_parameters) == 0
+    @test component_derivative_allocations(large_dynamics,
+        large_x, large_u, empty_parameters, large_multiplier) == 0
+
+    function backend_solver(backend;
+            dynamics_function=(x, u) -> SVector(x[1]))
+        stage = Objective(
+            (x, u) -> (u[1] - 1.0)^2 + u[2]^2, 1, 2;
+            backend=backend)
+        terminal = TerminalObjective(x -> 0.0, 1; backend=backend)
+        dynamics = Dynamics(
+            dynamics_function, 1, 2; backend=backend)
+        equalities = EqualityConstraints(
+            (x, u) -> SVector(u[2]), 1, 2; backend=backend)
+        inequalities = InequalityConstraints(
+            (x, u) -> SVector(u[1]), 1, 2,
+            SVector(0.0), SVector(Inf); backend=backend)
+        limits = ControlLimits(
+            @SVector([-Inf, -Inf]), @SVector([Inf, Inf]))
+        return Solver(build_ocp(
+            3, stage, terminal, dynamics, equalities, inequalities, limits);
+            options=Options{Float64}(verbose=false))
+    end
+
+    symbolic_solver = backend_solver(SymbolicsBackend())
+    forwarddiff_solver = backend_solver(forwarddiff)
+    initial_controls = [@SVector([0.5, 0.1]) for _ = 1:2]
+
+    nonfinite_solver = backend_solver(forwarddiff)
+    FilterDDP.initialize_trajectory!(
+        nonfinite_solver, initial_controls, @SVector([0.0]))
+    update = nonfinite_solver.update[1]
+    nonfinite_solver.update[1] = FilterDDP.UpdateRule(
+        @SVector([Inf, 0.0]), update.αs, update.ψh, update.ψg,
+        update.β, update.βs, update.ωh, update.ωg,
+        update.χl, update.χu, update.ζl, update.ζu,
+        update.χsl, update.χsu, update.ζsl, update.ζsu)
+    FilterDDP.rollout!(nonfinite_solver, nonfinite_solver.ocp,
+        nonfinite_solver.data, 0.99, 1.0)
+    @test nonfinite_solver.data.status == 5
+
+    domain_error_solver = backend_solver(forwarddiff;
+        dynamics_function=(x, u) -> u[1] > 1.0 ?
+            SVector(sqrt(-1.0)) : SVector(x[1]))
+    FilterDDP.initialize_trajectory!(
+        domain_error_solver, initial_controls, @SVector([0.0]))
+    update = domain_error_solver.update[1]
+    domain_error_solver.update[1] = FilterDDP.UpdateRule(
+        @SVector([1.0, 0.0]), update.αs, update.ψh, update.ψg,
+        update.β, update.βs, update.ωh, update.ωg,
+        update.χl, update.χu, update.ζl, update.ζu,
+        update.χsl, update.χsu, update.ζsl, update.ζsu)
+    FilterDDP.rollout!(domain_error_solver, domain_error_solver.ocp,
+        domain_error_solver.data, 0.99, 1.0)
+    @test domain_error_solver.data.status == 5
+
+    @test solve!(symbolic_solver, @SVector([0.0]), initial_controls) == 0
+    @test solve!(forwarddiff_solver, @SVector([0.0]), initial_controls) == 0
+    symbolic_states, symbolic_controls = get_trajectory(symbolic_solver)
+    forwarddiff_states, forwarddiff_controls = get_trajectory(forwarddiff_solver)
+    @test symbolic_solver.data.objective ≈ forwarddiff_solver.data.objective
+    @test symbolic_states ≈ forwarddiff_states
+    @test symbolic_controls ≈ forwarddiff_controls
 end
 
 @testset "automatic NLP scaling" begin

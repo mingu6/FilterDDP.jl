@@ -41,6 +41,17 @@ function forward_pass!(solver::Solver{T, nx, nu, nh, ng},
     data.status != 0 && (verbose && (@warn "Line search failed to find a suitable iterate"))
 end
 
+@inline function trial_component_value(component, args...)
+    try
+        return component_value(component, args...)
+    catch error
+        if error isa DomainError || error isa OverflowError
+            return nothing
+        end
+        rethrow()
+    end
+end
+
 function rollout!(solver::Solver{T, nx, nu, nh, ng},
             ocp::OCP{T, nx, nu, nh, ng}, data::SolverData{T},
             τ::T, step_size::T) where {T, nx, nu, nh, ng}
@@ -98,6 +109,11 @@ function rollout!(solver::Solver{T, nx, nu, nh, ng},
         else
             s, ν, zsl, zsu = s̄, ν̄, zsl̄, zsū
         end
+
+        if !all(isfinite, x) || !all(isfinite, u) || !all(isfinite, s)
+            data.status = 5
+            return
+        end
         
         # update current trajectory
         solver.current[t] = TrajectoryElement(
@@ -105,14 +121,27 @@ function rollout!(solver::Solver{T, nx, nu, nh, ng},
 
         # evaluate constraints and violation
         if nh > 0
-            h = evaluate(ocp.equality_constraints.h, x, u,
+            h = trial_component_value(ocp.equality_constraints, x, u,
                 parameters.equality_constraints)
+            if isnothing(h) || !all(isfinite, h)
+                data.status = 5
+                return
+            end
             data.primal_1_next += norm(solver.scaling.equality[t] .* h, 1)
             data.barrier_lagrangian_next += dot(h, ϕ)
         end
         if ng > 0
-            q = evaluate(inequalities.g, x, u,
-                parameters.inequality_constraints) - s
+            inequality_value = trial_component_value(inequalities, x, u,
+                parameters.inequality_constraints)
+            if isnothing(inequality_value)
+                data.status = 5
+                return
+            end
+            q = inequality_value - s
+            if !all(isfinite, q)
+                data.status = 5
+                return
+            end
             data.primal_1_next += norm(solver.scaling.inequality[t] .* q, 1)
             data.barrier_lagrangian_next += dot(q, ν)
         end
@@ -171,12 +200,27 @@ function rollout!(solver::Solver{T, nx, nu, nh, ng},
             data.barrier_lagrangian_next -= μ * dot(log.(sl), slack_bounds.maskl)
             data.barrier_lagrangian_next -= μ * dot(log.(su), slack_bounds.masku)
         end
-        data.barrier_lagrangian_next += objective_scale *
-            evaluate(ocp.stage_objective.l, x, u,
-                parameters.stage_objective)[1]
-        x = evaluate(solver.ocp.dynamics.f, x, u, parameters.dynamics)
+        stage_value = trial_component_value(ocp.stage_objective, x, u,
+            parameters.stage_objective)
+        if isnothing(stage_value) || !isfinite(stage_value)
+            data.status = 5
+            return
+        end
+        data.barrier_lagrangian_next += objective_scale * stage_value
+        next_x = trial_component_value(
+            solver.ocp.dynamics, x, u, parameters.dynamics)
+        if isnothing(next_x) || !all(isfinite, next_x)
+            data.status = 5
+            return
+        end
+        x = next_x
     end
     solver.current_terminal_state[] = x
-    data.barrier_lagrangian_next += objective_scale *
-        evaluate(ocp.term_objective.l, x, parameters.term_objective)[1]
+    terminal_value = trial_component_value(
+        ocp.term_objective, x, parameters.term_objective)
+    if isnothing(terminal_value) || !isfinite(terminal_value)
+        data.status = 5
+        return
+    end
+    data.barrier_lagrangian_next += objective_scale * terminal_value
 end
