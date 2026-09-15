@@ -4,11 +4,9 @@ using Random
 using Plots
 using Suppressor
 using Printf
-using BenchmarkTools
 
 visualise = false
 output = false
-benchmark = false
 bfgs = false
 
 print_level = output ? 5 : 4
@@ -52,113 +50,103 @@ for seed = 1:n_ocp
         0.05 .+ 0.1 * rand(2))
 
     nq = cartpole.nq
-    nF = cartpole.nu
     nc = cartpole.nc
-    nx = 2 * nq
-    nu = nF + nq + 6 * nc + 6
 
     # ## Objective
 
-    function stage_obj(x, u)
-		F = u[1]
-        s = u[(nF + nq + 6 * nc) .+ (1:6)]
-		J = 0.01 * Δ * F * F + 2. * sum(s)
-		return J
-	end
+    function stage_obj(F, β1, β2, η1, η2, ψ, s)
+        return 0.01 * Δ * F * F + ψ[1] * s[1] + ψ[2] * s[2] +
+            β1[1] * η1[1] + β1[2] * η1[2] +
+            β2[1] * η2[1] + β2[2] * η2[2]
+    end
 
-    function term_obj(x, u)
-		J = 0.0 
-		
-		q⁻ = x[1:cartpole.nq] 
-		q = x[cartpole.nq .+ (1:cartpole.nq)] 
-		q̇ᵐ⁻ = (q - q⁻) ./ Δ
+    function term_obj(q⁻, q)
+        q̇ᵐ⁻ = (q - q⁻) ./ Δ
+        return 200.0 * q̇ᵐ⁻' * q̇ᵐ⁻ + 700.0 * (q - qN)' * (q - qN)
+    end
 
-		J += 200.0 * q̇ᵐ⁻' * q̇ᵐ⁻
-		J += 700.0 * (q - qN)' * (q - qN)
-		return J
-	end
-
-    cost = (x, u) -> begin
+    cost = (q, F, β1, β2, η1, η2, ψ, s) -> begin
         J = 0.0
         for k in 1:N-1
-            J += stage_obj(x[k, :], u[k, :])
+            J += stage_obj(F[k], β1[k, :], β2[k, :], η1[k, :],
+                η2[k, :], ψ[k, :], s[k, :])
         end
-        J += term_obj(x[N, :], 0.0)
+        J += term_obj(q[N, :], q[N+1, :])
         return J
     end
 
-    # ## Dynamics - forward Euler
-
-    f = (x, u) -> [x[nq .+ (1:nq)]; u[nF .+ (1:nq)]]  # forward Euler
-    dyn_con = (x, u) -> implicit_contact_dynamics_slack(cartpole, x, u, Δ)
-
     # ## Constraints
 
-    @variable(model, x[1:N, 1:nx]);
-    @variable(model, u[1:N-1, 1:nu]);
+    @variable(model, q[1:N+1, 1:nq])
+    @variable(model, -10.0 <= F[1:N-1] <= 10.0)
+    @variable(model, β1[1:N-1, 1:nc] >= 0.0)
+    @variable(model, β2[1:N-1, 1:nc] >= 0.0)
+    @variable(model, η1[1:N-1, 1:nc] >= 0.0)
+    @variable(model, η2[1:N-1, 1:nc] >= 0.0)
+    @variable(model, ψ[1:N-1, 1:nc] >= 0.0)
+    @variable(model, s[1:N-1, 1:nc] >= 0.0)
 
-    limit = 10.0
-    for t = 1:N-1
-        for i = 1:nF
-            set_lower_bound(u[t, i], -limit)
-            set_upper_bound(u[t, i], limit)
-        end
-        for i = nF + nq .+ (1:6*nc+6)
-            set_lower_bound(u[t, i], 0.0)
-        end
-    end
+    @objective(model, Min, cost(q, F, β1, β2, η1, η2, ψ, s))
 
-    @objective(model, Min, cost(x, u))
-
+    q1 = zeros(nq)
+    fix.(q[1, :], q1, force=true)
+    fix.(q[2, :], q1, force=true)
     for k = 1:N-1
-        @constraint(model, x[k+1, :] == f(x[k, :], u[k, :]))
-        @constraint(model, dyn_con(x[k, :], u[k, :]) .== 0.0)
+        λ = [β1[k, 1] - β1[k, 2], β2[k, 1] - β2[k, 2]]
+        q̇ᵐ⁺ = (q[k+2, :] - q[k+1, :]) ./ Δ
+        γ1 = cartpole.friction[1] * (cartpole.mp + cartpole.mc) * cartpole.g
+        γ2 = cartpole.friction[2] * cartpole.mp * cartpole.g * cartpole.l
+        @constraint(model, manipulator_fd(cartpole, Δ,
+            q[k, :], q[k+1, :], q[k+2, :], F[k], λ) .== 0.0)
+        @constraint(model, q̇ᵐ⁺[1] + ψ[k, 1] - η1[k, 1] == 0.0)
+        @constraint(model, -q̇ᵐ⁺[1] + ψ[k, 1] - η1[k, 2] == 0.0)
+        @constraint(model, q̇ᵐ⁺[2] + ψ[k, 2] - η2[k, 1] == 0.0)
+        @constraint(model, -q̇ᵐ⁺[2] + ψ[k, 2] - η2[k, 2] == 0.0)
+        @constraint(model, γ1 - β1[k, 1] - β1[k, 2] - s[k, 1] == 0.0)
+        @constraint(model, γ2 - β2[k, 1] - β2[k, 2] - s[k, 2] == 0.0)
+        @constraint(model, ψ[k, 1] * s[k, 1] >= 0.0)
+        @constraint(model, ψ[k, 2] * s[k, 2] >= 0.0)
+        @constraint(model, β1[k, 1] * η1[k, 1] >= 0.0)
+        @constraint(model, β1[k, 2] * η1[k, 2] >= 0.0)
+        @constraint(model, β2[k, 1] * η2[k, 1] >= 0.0)
+        @constraint(model, β2[k, 2] * η2[k, 2] >= 0.0)
     end
     
     # ## Initialise variables and solve
     
-    q1 = zeros(2)
-	q1_plus = zeros(2)
-	x1 = [q1; q1_plus]
-    fix.(x[1, :], x1, force = true)
-
-    q_init = [zeros(2) for k = 1:N-1]
-    ū = [[zeros(nF); q_init[k]; 0.01 * ones(6 * nc); 0.01 * ones(6)] for k = 1:N-1]
-    
-    x̄ = [x1]
-    for k in 2:N
-        push!(x̄, f(x̄[k-1],  ū[k-1]))
-    end
-    
-    for k = 1:N
-        for j = 1:nx
-            set_start_value(x[k, j], x̄[k][j])
+    function set_initial_guess!()
+        for k = 1:N+1
+            for j = 1:nq
+                set_start_value(q[k, j], 0.0)
+            end
         end
-    end
-    
-    for k = 1:N-1
-        for j = 1:nu
-            set_start_value(u[k, j], ū[k][j])
+        for k = 1:N-1
+            set_start_value(F[k], 0.0)
+            for j = 1:nc
+                set_start_value(β1[k, j], 0.01)
+                set_start_value(β2[k, j], 0.01)
+                set_start_value(η1[k, j], 0.01)
+                set_start_value(η2[k, j], 0.01)
+                set_start_value(ψ[k, j], 0.01)
+                set_start_value(s[k, j], 0.01)
+            end
         end
     end
     
     set_attribute(model, "print_level", print_level)
-    ipopt_out = @capture_out optimize!(model)
+    set_initial_guess!()
+    @capture_out optimize!(model)
+    set_initial_guess!()
+    ipopt_out = ""
+    wall_time = 1e3 * @elapsed begin
+        ipopt_out = @capture_out optimize!(model)
+    end
     objective, constr_viol, n_iter, succ, _, _ = parse_results_ipopt(ipopt_out)
-    
-    if benchmark
-		set_attribute(model, "print_level", 0)
-		b = @benchmark optimize!($model)
-		wall_time = median(b.times) / 1e6
-		push!(results, [seed, n_iter, succ, objective, constr_viol, wall_time])
-	else
-		push!(results, [seed, n_iter, succ, objective, constr_viol])
-	end
+	push!(results, [seed, n_iter, succ, objective, constr_viol, wall_time])
 
     if visualise && seed == 1
-        xv = value.(x)
-        x_sol = [xv[k, :] for k in 1:N]
-        q_sol = [x[1:nq] for x in x_sol]
+        qv = value.(q)
+        q_sol = [qv[k, :] for k in 1:N]
         animate_cartpole(q_sol, Δ, cartpole);
     end
 end
@@ -167,11 +155,7 @@ fname = bfgs ? "results/bfgs_cartpole_friction.txt" : "results/cartpole_friction
 open(fname, "w") do io
 	@printf(io, " seed  iterations  status     objective           primal        wall (ms)  \n")
     for i = 1:n_ocp
-        if benchmark
-            @printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f      \n", Int64(results[i][1]), Int64(results[i][2]), Bool(results[i][3]),
-                            results[i][4], results[i][5], results[i][6])
-        else
-            @printf(io, " %2s     %5s      %5s    %.8e    %.8e \n",  Int64(results[i][1]), Int64(results[i][2]), Bool(results[i][3]), results[i][4], results[i][5])
-        end
+		@printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f      \n", Int64(results[i][1]), Int64(results[i][2]), Bool(results[i][3]),
+			results[i][4], results[i][5], results[i][6])
     end
 end

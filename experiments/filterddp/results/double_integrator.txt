@@ -1,2 +1,2 @@
  seed  iterations  status     objective           primal        wall (ms)   
-  1        51       true    1.26574863e+00    8.09173759e-08       1.4      
+  1        31       true    1.26574863e+00    2.97128189e-09       0.5      

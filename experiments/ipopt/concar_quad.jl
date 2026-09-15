@@ -4,11 +4,9 @@ using Random
 using Plots
 using Suppressor
 using Printf
-using BenchmarkTools
 
 visualise = false
 output = false
-benchmark = false
 bfgs = false
 
 print_level = output ? 5 : 4
@@ -76,8 +74,7 @@ for seed = 1:n_ocp
     xyr_obs = [obs_1, obs_2, obs_3, obs_4]
     num_obstacles = length(xyr_obs)
 
-    @variable(model, s_obs[1:N-1, 1:num_obstacles] .>= 0.0);  # slacks for obstacle constraints
-    @variable(model, s[1:N-1, 1:num_obstacles] .>= 0.0);  # upper bound slack variables
+    @variable(model, s[1:N-1, 1:num_obstacles] .>= 0.0)
 
     # ## Dynamics - RK2
 
@@ -103,7 +100,7 @@ for seed = 1:n_ocp
     for k = 1:N-1
         @constraint(model, RK2(x[k, :], u[k, :], g) == x[k+1, :])
         for (i, obs) in enumerate(xyr_obs)
-            @constraint(model, (obs[3] + r_car)^2 - obs_dist(obs[1:2])(x[k, :]) + s_obs[k, i] <= s[k, i])
+            @constraint(model, (obs[3] + r_car)^2 - obs_dist(obs[1:2])(x[k, :]) <= s[k, i])
         end
     end
 
@@ -147,26 +144,31 @@ for seed = 1:n_ocp
         push!(x̄, RK2(x̄[k-1], ū[k-1], g))
     end
     
-    for k = 1:N
-        for j = 1:nx
-            set_start_value(x[k, j], x̄[k][j])
+    function set_initial_guess!()
+        for k = 1:N
+            for j = 1:nx
+                set_start_value(x[k, j], x̄[k][j])
+            end
+        end
+        for k = 1:N-1
+            for j = 1:nu
+                set_start_value(u[k, j], ū[k][j])
+            end
+        end
+        for k = 1:N-1
+            for j = 1:num_obstacles
+                set_start_value(s[k, j], 0.01)
+            end
         end
     end
     
-    for k = 1:N-1
-        for j = 1:nu
-            set_start_value(u[k, j], ū[k][j])
-        end
+    set_initial_guess!()
+    @capture_out optimize!(model)
+    set_initial_guess!()
+    ipopt_out = ""
+    wall_time = 1e3 * @elapsed begin
+        ipopt_out = @capture_out optimize!(model)
     end
-    
-    for k = 1:N-1
-        for j = 1:num_obstacles
-            set_start_value(s_obs[k, j], 0.01)
-            set_start_value(s[k, j], 0.01)
-        end
-    end
-    
-    ipopt_out = @capture_out optimize!(model)
     objective, constr_viol, n_iter, succ, _, _ = parse_results_ipopt(ipopt_out)
 
     # visualise trajectories
@@ -175,14 +177,7 @@ for seed = 1:n_ocp
     x_sol = [xv[k, :] for k in 1:N]
     visualise && plotTrajectory!(x_sol)
     
-    if benchmark
-		set_attribute(model, "print_level", 0)
-		b = @benchmark optimize!($model)
-		wall_time = median(b.times) / 1e6
-		push!(results, [seed, n_iter, succ, objective, constr_viol, wall_time])
-	else
-		push!(results, [seed, n_iter, succ, objective, constr_viol])
-	end
+    push!(results, [seed, n_iter, succ, objective, constr_viol, wall_time])
     visualise && savefig("plots/concar_IPOPT_$seed.pdf")
 end
 
@@ -190,11 +185,7 @@ fname = bfgs ? "results/bfgs_concar_quad.txt" : "results/concar_quad.txt"
 open(fname, "w") do io
 	@printf(io, " seed  iterations  status     objective           primal        wall (ms)  \n")
     for i = 1:n_ocp
-        if benchmark
-            @printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f     \n", Int64(results[i][1]), Int64(results[i][2]), Bool(results[i][3]),
-                            results[i][4], results[i][5], results[i][6])
-        else
-            @printf(io, " %2s     %5s      %5s    %.8e    %.8e \n",  Int64(results[i][1]), Int64(results[i][2]), Bool(results[i][3]), results[i][4], results[i][5])
-        end
+		@printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f     \n", Int64(results[i][1]), Int64(results[i][2]), Bool(results[i][3]),
+			results[i][4], results[i][5], results[i][6])
     end
 end

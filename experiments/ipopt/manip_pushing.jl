@@ -2,13 +2,10 @@ using JuMP
 import Ipopt
 using Random
 using Plots
-using BenchmarkTools
 using Suppressor
 using Printf
-using BenchmarkTools
 
 output = false
-benchmark = false
 bfgs = false
 
 print_level = output ? 5 : 4
@@ -69,7 +66,7 @@ for seed = 1:n_ocp
     r_push = 0.01
     r_total = max(zx, zy) + r_push
 
-    nu = 11
+    nu = 7
     nx = 4
 
     @variable(model, x[1:N, 1:nx]);
@@ -77,8 +74,8 @@ for seed = 1:n_ocp
 
     # ## control limits
 
-    ul = [0.0, -force_lim, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.9, 0.0, 0.0]
-    uu = [force_lim, force_lim, vel_lim, vel_lim, Inf, Inf, Inf, Inf, 0.9, Inf, Inf]
+    ul = [0.0, -force_lim, 0.0, 0.0, 0.0, 0.0, 0.0]
+    uu = [force_lim, force_lim, vel_lim, vel_lim, Inf, Inf, Inf]
 
     for t = 1:N-1
         for i = 1:nu
@@ -115,30 +112,32 @@ for seed = 1:n_ocp
 
     function obs_constr(x, u)
         xdiff = x[1:2] - obstacle[1:2]
-        return (obstacle[3] + r_total)^2 - xdiff' * xdiff + u[10] - u[11]
+        return (obstacle[3] + r_total)^2 - xdiff' * xdiff - u[7]
     end
 
     function constr(x, u)
         [
         μ_fric * u[1] - u[2] - u[5];
         μ_fric * u[1] + u[2] - u[6];
-        u[5] * u[3] - u[7];
-        u[6] * u[4] - u[8];
-        x[4] - u[9]  # bound constraint on ϕ_t
-        obs_constr(x, u)
         ]
     end
 
     for k = 1:N-1
         @constraint(model, x[k+1, :] == f(x[k, :], u[k, :]))
-        @constraint(model, constr(x[k, :], u[k, :]) == zeros(6))
+        @constraint(model, constr(x[k, :], u[k, :]) == zeros(2))
+        @constraint(model, u[k, 5] * u[k, 3] >= 0.0)
+        @constraint(model, u[k, 6] * u[k, 4] >= 0.0)
+        @constraint(model, obs_constr(x[k, :], u[k, :]) <= 0.0)
+        set_lower_bound(x[k, 4], -0.9)
+        set_upper_bound(x[k, 4], 0.9)
     end
 
     # objective
 
     stage_cost = (x, u) -> begin
         J = 0.0
-        J += 1e-2 * u[1:2]' * u[1:2] + 2. * sum(u[7:8]) + 2. * u[11]
+        J += 1e-2 * u[1:2]' * u[1:2] +
+            2.0 * (u[5] * u[3] + u[6] * u[4]) + 2.0 * u[7]
         return J
     end
 
@@ -166,40 +165,36 @@ for seed = 1:n_ocp
         push!(x̄, f(x̄[k-1], ū[k-1]))
     end
     
-    for k = 1:N
-        for j = 1:nx
-            set_start_value(x[k, j], x̄[k][j])
+    function set_initial_guess!()
+        for k = 1:N
+            for j = 1:nx
+                set_start_value(x[k, j], x̄[k][j])
+            end
+        end
+        for k = 1:N-1
+            for j = 1:nu
+                set_start_value(u[k, j], ū[k][j])
+            end
         end
     end
     
-    for k = 1:N-1
-        for j = 1:nu
-            set_start_value(u[k, j], ū[k][j])
-        end
+    set_initial_guess!()
+    @capture_out optimize!(model)
+    set_initial_guess!()
+    ipopt_out = ""
+    wall_time = 1e3 * @elapsed begin
+        ipopt_out = @capture_out optimize!(model)
     end
-    
-    ipopt_out = @capture_out optimize!(model)
     objective, constr_viol, n_iter, succ, _, _ = parse_results_ipopt(ipopt_out)
 
-    if benchmark
-		set_attribute(model, "print_level", 0)
-		b = @benchmark optimize!($model)
-		wall_time = median(b.times) / 1e6
-		push!(results, [seed, n_iter, succ, objective, constr_viol, wall_time])
-	else
-		push!(results, [seed, n_iter, succ, objective, constr_viol])
-	end
+	push!(results, [seed, n_iter, succ, objective, constr_viol, wall_time])
 end
 
 fname = bfgs ? "results/bfgs_manip_pushing.txt" : "results/manip_pushing.txt"
 open(fname, "w") do io
 	@printf(io, " seed  iterations  status     objective           primal        wall (ms)   \n")
     for i = 1:n_ocp
-        if benchmark
-            @printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f    \n", Int64(results[i][1]), Int64(results[i][2]), Bool(results[i][3]),
-                            results[i][4], results[i][5], results[i][6])
-        else
-            @printf(io, " %2s     %5s      %5s    %.8e    %.8e \n",  Int64(results[i][1]), Int64(results[i][2]), Bool(results[i][3]), results[i][4], results[i][5])
-        end
+		@printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f     \n", Int64(results[i][1]), Int64(results[i][2]), Bool(results[i][3]),
+			results[i][4], results[i][5], results[i][6])
     end
 end

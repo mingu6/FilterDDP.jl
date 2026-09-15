@@ -5,10 +5,8 @@ using Plots
 using Printf
 using LaTeXStrings
 using StaticArrays
-using BenchmarkTools
 
 visualise = false
-benchmark = false
 verbose = true
 
 T = Float64
@@ -145,15 +143,9 @@ for seed = 1:n_ocp
     
     ū = [SVector{nu, T}(0.01 .* ones(T, nu)) for k = 1:N-1]
     solve!(solver, x1, ū)
-
-    if benchmark
-		solver.options.verbose = false
-		b = @benchmark solve!($solver, $x1, $ū)
-		wall_time = median(b.times) / 1e6
-		push!(results, [seed, solver.data.k, solver.data.status, solver.data.objective, solver.data.primal_inf, wall_time])
-	else
-		push!(results, [seed, solver.data.k, solver.data.status, solver.data.objective, solver.data.primal_inf])
-	end
+    solver.options.verbose = false
+    wall_time = 1e3 * @elapsed solve!(solver, x1, ū)
+    push!(results, [seed, solver.data.k, solver.data.status, solver.data.objective, solver.data.primal_inf, wall_time])
 
     push!(params, [xyc; μ_fric; obstacle])
 
@@ -215,12 +207,8 @@ end
 open("results/manip_pushing.txt", "w") do io
 	@printf(io, " seed  iterations  status     objective           primal        wall (ms)   \n")
     for i = 1:length(results)
-        if benchmark
-            @printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f     \n", Int64(results[i][1]), Int64(results[i][2]), Int64(results[i][3]) == 0,
-                            results[i][4], results[i][5], results[i][6])
-        else
-            @printf(io, " %2s     %5s      %5s    %.8e    %.8e \n",  Int64(results[i][1]), Int64(results[i][2]), Int64(results[i][3]) == 0, results[i][4], results[i][5])
-        end
+		@printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f     \n", Int64(results[i][1]), Int64(results[i][2]), Int64(results[i][3]) == 0,
+			results[i][4], results[i][5], results[i][6])
     end
 end
 

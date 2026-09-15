@@ -5,11 +5,9 @@ using Plots
 using Suppressor
 using Printf
 using LaTeXStrings
-using BenchmarkTools
 
 visualise = false
 output = false
-benchmark = false
 bfgs = false
 
 print_level = output ? 5 : 4
@@ -44,8 +42,6 @@ for seed = 1:n_ocp
 	nq = acrobot_impact.nq
 	nc = acrobot_impact.nc
 	nτ = acrobot_impact.nu
-	nx = 2 * nq
-	nu = nτ + nq + 3 * nc
 
 	if bfgs
         model = Model(
@@ -63,22 +59,15 @@ for seed = 1:n_ocp
                 );
     end
 
-	f = (x, u) -> [x[nq .+ (1:nq)]; u[nτ .+ (1:nq)]]
-
 	# ## Objective
 
-	function stage_obj(x, u)
-		τ = u[1]
-		s = u[(nτ + nq + 2 * nc) .+ (1:nc)]
-		J = 0.01 * Δ * τ * τ + 2. * (s[1] + s[2])
+	function stage_obj(τ, λ, s)
+		J = 0.01 * Δ * τ * τ + 2.0 * (λ[1] * s[1] + λ[2] * s[2])
 		return J
 	end
 
-	function term_obj(x, u)
+	function term_obj(q⁻, q)
 		J = 0.0 
-		
-		q⁻ = x[1:acrobot_impact.nq] 
-		q = x[acrobot_impact.nq .+ (1:acrobot_impact.nq)] 
 		q̇ᵐ⁻ = (q - q⁻) ./ Δ
 
 		J += 200.0 * q̇ᵐ⁻' * q̇ᵐ⁻
@@ -86,89 +75,72 @@ for seed = 1:n_ocp
 		return J
 	end
 
-	cost = (x, u) -> begin
+	cost = (q, τ, λ, s) -> begin
 		J = 0.0
 		for k in 1:N-1
-			J += stage_obj(x[k, :], u[k, :])
+			J += stage_obj(τ[k], λ[k, :], s[k, :])
 		end
-		J += term_obj(x[N, :], 0.0)
+		J += term_obj(q[N, :], q[N+1, :])
 	end
 
 	# ## Constraints
 
-	constr = (x, u) -> implicit_contact_dynamics_slack(acrobot_impact, x, u, Δ)
+	@variable(model, q[1:N+1, 1:nq]);
+	@variable(model, -8.0 <= τ[1:N-1] <= 8.0);
+	@variable(model, λ[1:N-1, 1:nc] >= 0.0);
+	@variable(model, s[1:N-1, 1:nc] >= 0.0);
 
-	@variable(model, x[1:N, 1:nx]);
-	@variable(model, u[1:N-1, 1:nu]);
-
-	limit = 8.0
-	for t = 1:N-1
-		set_lower_bound(u[t, 1], -limit)
-		set_upper_bound(u[t, 1], limit)
-		for i = (nτ + nq) .+ (1:3*nc)
-			set_lower_bound(u[t, i], 0.0)
-		end
-	end
-
-	@objective(model, Min, cost(x, u))
+	@objective(model, Min, cost(q, τ, λ, s))
 
 
 	q1 = zeros(2)
 	q1_plus = zeros(2)
-	x1 = [q1; q1_plus]
-	fix.(x[1, :], x1, force = true)
+	fix.(q[1, :], q1, force = true)
+	fix.(q[2, :], q1_plus, force = true)
 	for k = 1:N-1
-		@constraint(model, x[k+1, :] == f(x[k, :], u[k, :]))
-		@constraint(model, constr(x[k, :], u[k, :]) .== 0.0)
+		@constraint(model, manipulator_fd(acrobot_impact, Δ,
+			q[k, :], q[k+1, :], q[k+2, :], τ[k], λ[k, :]) .== 0.0)
+		@constraint(model, s[k, :] .- ϕ_func(acrobot_impact, q[k+2, :]) .== 0.0)
+		@constraint(model, λ[k, :] .* s[k, :] .>= 0.0)
 	end
 	
 	# ## Initialise variables and solve
 	
-	q_init = [zeros(2) for k = 1:N-1]
-	ū = [[zeros(nτ); q_init[k]; 0.01 * ones(nc); 0.01 * ones(2 * nc)] for k = 1:N-1]
-	
-	x̄ = [x1]
-	for k in 2:N
-		push!(x̄, f(x̄[k-1],  ū[k-1]))
-	end
-	
-	for k = 1:N
-		for j = 1:nx
-			set_start_value(x[k, j], x̄[k][j])
+	function set_initial_guess!()
+		for k = 1:N+1
+			for j = 1:nq
+				set_start_value(q[k, j], 0.0)
+			end
 		end
-	end
-	
-	for k = 1:N-1
-		for j = 1:nu
-			set_start_value(u[k, j], ū[k][j])
+		for k = 1:N-1
+			set_start_value(τ[k], 0.0)
+			for j = 1:nc
+				set_start_value(λ[k, j], 0.01)
+				set_start_value(s[k, j], 0.01)
+			end
 		end
 	end
 	
 	set_attribute(model, "print_level", print_level)
-	ipopt_out = @capture_out optimize!(model)
-	objective, constr_viol, n_iter, succ, _, _ = parse_results_ipopt(ipopt_out)
-	
-	if benchmark
-		set_attribute(model, "print_level", 0)
-		b = @benchmark optimize!($model)
-		wall_time = median(b.times) / 1e6
-		push!(results, [seed, n_iter, succ, objective, constr_viol, wall_time])
-	else
-		push!(results, [seed, n_iter, succ, objective, constr_viol])
+	set_initial_guess!()
+	@capture_out optimize!(model)
+	set_initial_guess!()
+	ipopt_out = ""
+	wall_time = 1e3 * @elapsed begin
+		ipopt_out = @capture_out optimize!(model)
 	end
+	objective, constr_viol, n_iter, succ, _, _ = parse_results_ipopt(ipopt_out)
+	push!(results, [seed, n_iter, succ, objective, constr_viol, wall_time])
 
 	# ## Plot solution
 	if seed == n_ocp && visualise
-		xv = value.(x)
-		x_sol = [xv[k, :] for k in 1:N]
-		uv = value.(u)
-		u_sol = [uv[k, :] for k in 1:N-1]
-
-		θe = map(x -> x[4], x_sol[1:end-1])
+		qv = value.(q)
+		λv = value.(λ)
+		θe = qv[2:N, 2]
 		s1 = map(θ -> π / 2 - θ, θe)
 		s2 = map(θ -> θ + π / 2, θe)
-		λ1 = map(u -> u[4], u_sol)
-		λ2 = map(u -> u[5], u_sol)
+		λ1 = λv[:, 1]
+		λ2 = λv[:, 2]
 		plot(range(0, Δ * (N-1), N-1), [s1 s2 λ1 λ2], xtickfontsize=16, ytickfontsize=16, xlabel=L"$t$", ylims=(0,6), fontfamily="Computer Modern",
 			legendfontsize=16, linewidth=2, xlabelfontsize=16, linestyle=[:solid :solid :dot :dot], linecolor=[1 2 1 2], legend_columns=-1,
 			background_color_legend = nothing, label=[L"$s_t^{(1)}$" L"$s_t^{(2)}$" L"$\lambda^{(1)}_t$" L"$\lambda^{(2)}_t$"])
@@ -179,7 +151,7 @@ for seed = 1:n_ocp
 	# ## Visualise trajectory using MeshCat
 
 	if visualise && seed == n_ocp
-		q_sol = [x[1:nq] for x in x_sol]
+		q_sol = [qv[k, :] for k = 1:N]
 		animate_acrobot(q_sol, Δ, acrobot_impact; filename="acrobot_contact.gif");
 	end
 end
@@ -188,12 +160,8 @@ fname = bfgs ? "results/bfgs_acrobot_contact.txt" : "results/acrobot_contact.txt
 open(fname, "w") do io
 	@printf(io, " seed  iterations  status     objective           primal        wall (ms)   \n")
     for i = 1:n_ocp
-        if benchmark
-            @printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f      \n", Int64(results[i][1]), Int64(results[i][2]), Bool(results[i][3]),
-                            results[i][4], results[i][5], results[i][6])
-        else
-            @printf(io, " %2s     %5s      %5s    %.8e    %.8e \n",  Int64(results[i][1]), Int64(results[i][2]), Bool(results[i][3]), results[i][4], results[i][5])
-        end
+		@printf(io, " %2s     %5s      %5s    %.8e    %.8e     %5.1f      \n", Int64(results[i][1]), Int64(results[i][2]), Bool(results[i][3]),
+			results[i][4], results[i][5], results[i][6])
     end
 end
 
