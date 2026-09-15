@@ -13,7 +13,6 @@ function solve!(solver::Solver)
 	data = solver.data
     
     reset!(data)
-    reset_filter!(data)
     previous_objective_scale = solver.scaling.objective
     compute_nlp_scaling!(solver)
     rescale_duals!(solver, solver.scaling.objective / previous_objective_scale)
@@ -25,7 +24,7 @@ function solve!(solver::Solver)
         ocp.inequality_constraints.bounds.nu) * nstages
 
     while data.k < options.max_iterations
-        backward_pass!(solver, ocp, solver.nominal, data, options, verbose=options.verbose)
+        backward_pass!(solver, ocp, solver.nominal, data, options, options.verbose)
         data.status != 0 && break
 
         # check (outer) overall problem convergence
@@ -43,7 +42,7 @@ function solve!(solver::Solver)
         
         options.verbose && iteration_status(data, options)
 
-        forward_pass!(solver, ocp, data, options, verbose=options.verbose)
+        forward_pass!(solver, ocp, data, options, options.verbose)
         data.status != 0 && break
         
         update_nominal_trajectory!(solver)
@@ -61,13 +60,24 @@ function solve!(solver::Solver)
 end
 
 function update_filter!(data::SolverData{T}, options::Options{T}) where T
-    new_filter_pt = [(1. - options.γ_θ) * data.primal_1_curr,
-                        data.barrier_lagrangian_curr - options.γ_L * data.primal_1_curr]
-    push!(data.filter, new_filter_pt)
+    new_filter_point = SVector{2, T}(
+        (one(T) - options.γ_θ) * data.primal_1_curr,
+        data.barrier_lagrangian_curr - options.γ_L * data.primal_1_curr)
+    filter = data.filter
+    next_index = 1
+    @inbounds for filter_point in filter
+        if !(new_filter_point[1] <= filter_point[1] &&
+                new_filter_point[2] <= filter_point[2])
+            filter[next_index] = filter_point
+            next_index += 1
+        end
+    end
+    resize!(filter, next_index - 1)
+    push!(filter, new_filter_point)
 end
 
 function reset_filter!(data::SolverData{T}) where T
     empty!(data.filter)
-    push!(data.filter, [data.max_primal_1, T(-Inf)])
+    push!(data.filter, SVector{2, T}(data.max_primal_1, -T(Inf)))
     data.status = 0
 end

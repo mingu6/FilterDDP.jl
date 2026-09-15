@@ -18,6 +18,47 @@ component_first_order_allocations(component, args...) =
 component_value_allocations(component, args...) =
     @allocated FilterDDP.component_value(component, args...)
 
+filter_update_allocations(data, options) =
+    @allocated FilterDDP.update_filter!(data, options)
+
+filter_reset_allocations(data) = @allocated FilterDDP.reset!(data)
+
+@testset "filter storage" begin
+    data = FilterDDP.solver_data(Float64)
+    options = Options{Float64}(γ_θ=0.1, γ_L=0.1)
+    filter = data.filter
+
+    FilterDDP.reset!(data)
+    @test data.filter === filter
+    @test data.filter == SVector{2, Float64}[SVector(1.0e6, -Inf)]
+
+    push!(data.filter, SVector(2.0, 5.0))
+    push!(data.filter, SVector(3.0, 4.0))
+    push!(data.filter, SVector(0.5, 6.0))
+    data.primal_1_curr = 1.0
+    data.barrier_lagrangian_curr = 4.0
+    FilterDDP.update_filter!(data, options)
+
+    @test length(data.filter) == 3
+    @test data.filter[2] == SVector(0.5, 6.0)
+    @test data.filter[3] ≈ SVector(0.9, 3.9)
+
+    sizehint!(data.filter, 8)
+    FilterDDP.reset!(data)
+    data.primal_1_curr = 1.0
+    data.barrier_lagrangian_curr = 4.0
+    FilterDDP.update_filter!(data, options)
+    FilterDDP.reset!(data)
+    data.primal_1_curr = 1.0
+    data.barrier_lagrangian_curr = 4.0
+    @test filter_update_allocations(data, options) == 0
+    @test filter_reset_allocations(data) == 0
+
+    float32_data = FilterDDP.solver_data(Float32)
+    FilterDDP.reset!(float32_data)
+    @test eltype(float32_data.filter) == SVector{2, Float32}
+end
+
 @testset "constraint notation" begin
     equalities = EqualityConstraints((x, u) -> [x[1]^2 + u[1]], 1, 1)
     x = @SVector [2.0]

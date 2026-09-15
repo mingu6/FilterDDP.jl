@@ -29,7 +29,7 @@ mutable struct SolverData{T}
     update_filter::Bool           # updated filter at current iteration
     switching::Bool               # switching condition satisfied (sufficient decrease on barrier obj. relative to constr. viol.)
     armijo_passed::Bool           # sufficient decrease condition of barrier obj. satisfied for current iterate
-    filter::Vector{Vector{T}}     # filter points TODO: move to staticarrays
+    filter::Vector{SVector{2, T}} # filter points
 end
 
 function solver_data(T)
@@ -56,7 +56,7 @@ function solver_data(T)
     update_filter = false
     switching = false
     armijo_passed = false
-    filter = [[T(0.0) , T(0.0)]]
+    filter = SVector{2, T}[SVector{2, T}(zero(T), zero(T))]
 
     SolverData(max_primal_1, min_primal_1, step_size, status, j, k, l, 
         μ, reg_last, objective, primal_inf, primal_inf_raw, dual_inf, cs_inf_0, cs_inf_μ,
@@ -88,5 +88,5 @@ function reset!(data::SolverData{T}) where T
     data.update_filter = false
     data.switching = false
     data.armijo_passed = false
-    data.filter = [[0.0 , 0.0]]
+    reset_filter!(data)
 end

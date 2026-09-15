@@ -1,6 +1,6 @@
 function forward_pass!(solver::Solver{T, nx, nu, nh, ng},
             ocp::OCP{T, nx, nu, nh, ng}, data::SolverData{T},
-            options::Options{T}; verbose=false) where {T, nx, nu, nh, ng}
+            options::Options{T}, verbose::Bool=false) where {T, nx, nu, nh, ng}
     data.l = 0  # line search iteration counter
     data.status = 0
     data.step_size = T(1.0)

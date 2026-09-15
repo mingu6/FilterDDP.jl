@@ -15,7 +15,7 @@ end
 function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
             ocp::OCP{T, nx, nu, nh, ng},
             traj::Vector{TrajectoryElement{T, nx, nu, nh, ng}},
-            data::SolverData{T}, options::Options{T}; verbose::Bool=false
+            data::SolverData{T}, options::Options{T}, verbose::Bool=false
             ) where {T, nx, nu, nh, ng, nux, nhx, ngx}
     reg::T = 0.0
     μ = data.μ
