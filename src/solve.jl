@@ -27,6 +27,11 @@ function solve!(solver::Solver)
         backward_pass!(solver, ocp, solver.nominal, data, options, options.verbose)
         data.status != 0 && break
 
+        # set minimum constraint violation required to trigger switching condition
+        if data.k == 0 && data.j == 0
+            data.min_primal_1 = 1.0e-4 * max(one(data.primal_1_curr), data.primal_1_curr)
+        end
+
         # check (outer) overall problem convergence
         # check (inner) barrier problem convergence and update barrier parameter if so
         opt_err_μ = max(data.dual_inf, data.cs_inf_μ, data.primal_inf)
