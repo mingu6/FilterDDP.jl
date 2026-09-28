@@ -25,16 +25,14 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
     equalities = ocp.equality_constraints
     inequalities = ocp.inequality_constraints
     dynamics = ocp.dynamics
-    control_limits = ocp.control_limits
-    slack_bounds = inequalities.bounds
+    control_limits_by_stage = ocp.control_limits
+    slack_bounds_by_stage = ocp.inequality_bounds
     parameters = ocp.parameters
     objective_scale = solver.scaling.objective
     reg_1 = objective_scale * options.reg_1
     reg_min = objective_scale * options.reg_min
     reg_max = objective_scale * options.reg_max
     nstages = ocp.N - 1
-    ni = (control_limits.nl + control_limits.nu +
-        slack_bounds.nl + slack_bounds.nu) * nstages
     terminal_state = solver.nominal_terminal_state[]
     terminal_parameters = parameters.term_objective
     
@@ -57,6 +55,7 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
         data.expected_change_L = T(0.0)
         ϕ_norm = T(0.0)
         z_norm = T(0.0) 
+        ni = 0
         
         for t = nstages:-1:1
             element = traj[t]
@@ -64,10 +63,14 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
             ϕ, ν = element.ϕ, element.ν
             zl, zu = element.zl, element.zu
             zsl, zsu = element.zsl, element.zsu
+            control_limits = control_limits_by_stage[t]
+            slack_bounds = slack_bounds_by_stage[t]
+            ni += control_limits.nl + control_limits.nu +
+                slack_bounds.nl + slack_bounds.nu
 
             # evaluate derivatives
 
-            objective_parameters = parameters.stage_objective
+            objective_parameters = parameters.stage_objective[t]
             objective_derivatives = component_derivatives(
                 ocp.stage_objective, x, u, objective_parameters)
             lx = objective_scale .* objective_derivatives.lx
@@ -79,7 +82,7 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
             
             if nh > 0
                 equality_derivatives = component_derivatives(
-                    equalities, x, u, parameters.equality_constraints, ϕ)
+                    equalities, x, u, parameters.equality_constraints[t], ϕ)
                 h = equality_derivatives.value
                 hx = equality_derivatives.yx
                 hu = equality_derivatives.yu
@@ -98,7 +101,7 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
 
             if ng > 0
                 inequality_derivatives = component_derivatives(
-                    inequalities, x, u, parameters.inequality_constraints, ν)
+                    inequalities, x, u, parameters.inequality_constraints[t], ν)
                 g = inequality_derivatives.value
                 gx = inequality_derivatives.yx
                 gu = inequality_derivatives.yu
@@ -117,7 +120,7 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
             unconstrained = nh == 0 && ng == 0
             dynamics_multiplier = unconstrained ? V̂x : λ
             dynamics_derivatives = component_derivatives(
-                dynamics, x, u, parameters.dynamics, dynamics_multiplier)
+                dynamics, x, u, parameters.dynamics[t], dynamics_multiplier)
             fx = dynamics_derivatives.yx
             fu = dynamics_derivatives.yu
             fxx = dynamics_derivatives.yxx

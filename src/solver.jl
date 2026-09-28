@@ -137,22 +137,34 @@ function initialize_interior(value::SVector{n, T}, bounds::BoundConstraints{T, n
     end)
 end
 
+function set_parameters!(solver::Solver; kwargs...)
+    set_parameters!(solver.ocp.parameters; kwargs...)
+    return solver
+end
+
+function set_bounds!(solver::Solver; kwargs...)
+    set_bounds!(solver.ocp; kwargs...)
+    return solver
+end
+
 function initialize_trajectory!(solver::Solver{T, nx, nu, nh, ng},
         u::Vector{SVector{nu, T}}, x1::SVector{nx, T}) where {T, nx, nu, nh, ng}
     options = solver.options
-    control_limits = solver.ocp.control_limits
+    control_limits_by_stage = solver.ocp.control_limits
     inequalities = solver.ocp.inequality_constraints
-    slack_bounds = inequalities.bounds
+    slack_bounds_by_stage = solver.ocp.inequality_bounds
     parameters = solver.ocp.parameters
     nstages = solver.ocp.N - 1
     length(u) == nstages || throw(DimensionMismatch(
         "expected $(nstages) controls for $(solver.ocp.N) state knots, got $(length(u))"))
     x = x1
     for t = 1:nstages
+        control_limits = control_limits_by_stage[t]
+        slack_bounds = slack_bounds_by_stage[t]
         ūt = initialize_interior(
             u[t], control_limits, options.κ_1, options.κ_2)
         s̄t = ng > 0 ? component_value(
-            inequalities, x, ūt, parameters.inequality_constraints) : @SVector zeros(T, ng)
+            inequalities, x, ūt, parameters.inequality_constraints[t]) : @SVector zeros(T, ng)
         s = initialize_interior(
             s̄t, slack_bounds, options.κ_1, options.κ_2)
         ϕ = @SVector zeros(T, nh)
@@ -163,7 +175,7 @@ function initialize_trajectory!(solver::Solver{T, nx, nu, nh, ng},
         zsu = options.ineq_dual_init .* SVector{ng, T}(slack_bounds.masku)
 
         solver.nominal[t] = TrajectoryElement(x, ūt, s, ϕ, ν, zl, zu, zsl, zsu)
-        x = component_value(solver.ocp.dynamics, x, ūt, parameters.dynamics)
+        x = component_value(solver.ocp.dynamics, x, ūt, parameters.dynamics[t])
     end
     solver.nominal_terminal_state[] = x
     solver.current_terminal_state[] = x
@@ -201,7 +213,7 @@ function compute_nlp_scaling!(solver::Solver{T, nx, nu, nh, ng}) where {T, nx, n
         element = solver.nominal[t]
         objective_derivatives = component_first_order(
             solver.ocp.stage_objective, element.x, element.u,
-            parameters.stage_objective)
+            parameters.stage_objective[t])
         objective_gradient_norm = max(
             objective_gradient_norm,
             norm(objective_derivatives.lx, Inf),
@@ -210,7 +222,7 @@ function compute_nlp_scaling!(solver::Solver{T, nx, nu, nh, ng}) where {T, nx, n
         if nh > 0
             equality_derivatives = component_first_order(
                 solver.ocp.equality_constraints, element.x, element.u,
-                parameters.equality_constraints)
+                parameters.equality_constraints[t])
             hx = equality_derivatives.yx
             hu = equality_derivatives.yu
             scaling.equality[t] = SVector{nh, T}(ntuple(Val(nh)) do index
@@ -222,7 +234,7 @@ function compute_nlp_scaling!(solver::Solver{T, nx, nu, nh, ng}) where {T, nx, n
         if ng > 0
             inequality_derivatives = component_first_order(
                 solver.ocp.inequality_constraints, element.x, element.u,
-                parameters.inequality_constraints)
+                parameters.inequality_constraints[t])
             gx = inequality_derivatives.yx
             gu = inequality_derivatives.yu
             scaling.inequality[t] = SVector{ng, T}(ntuple(Val(ng)) do index

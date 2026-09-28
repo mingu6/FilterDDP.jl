@@ -96,13 +96,7 @@ for seed = 1:n_ocp
         T(0.05) + T(0.1) * rand(T),
         T(0.05) + T(0.1) * rand(T)]
     cartpole = cartpole_model(equality_parameters)
-    empty_parameters = SVector{0, T}()
-    ocp_parameters = OCPParameters(
-        stage_objective=empty_parameters,
-        term_objective=empty_parameters,
-        dynamics=empty_parameters,
-        equality_constraints=equality_parameters,
-        inequality_constraints=empty_parameters)
+    ocp_parameters = (equality_constraints=equality_parameters,)
 
     ocp = build_ocp(N, stage_objective, terminal_objective, dynamics,
         equalities, inequalities, control_limits; parameters=ocp_parameters)

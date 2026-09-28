@@ -41,7 +41,8 @@ export InequalityConstraints
 export Dynamics
 export BoundConstraints
 export ControlLimits
-export OCPParameters
+export set_parameters!
+export set_bounds!
 export build_ocp
 export Solver,
     Options,

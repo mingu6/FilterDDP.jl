@@ -18,10 +18,7 @@ function solve!(solver::Solver)
     rescale_duals!(solver, solver.scaling.objective / previous_objective_scale)
 
     data.μ = solver.scaling.objective * options.μ_init
-    nstages = ocp.N - 1
-    ni = (ocp.control_limits.nl + ocp.control_limits.nu +
-        ocp.inequality_constraints.bounds.nl +
-        ocp.inequality_constraints.bounds.nu) * nstages
+    ni = bound_count(ocp)
 
     while data.k < options.max_iterations
         backward_pass!(solver, ocp, solver.nominal, data, options)

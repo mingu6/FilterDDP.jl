@@ -56,9 +56,9 @@ function rollout!(solver::Solver{T, nx, nu, nh, ng},
             ocp::OCP{T, nx, nu, nh, ng}, data::SolverData{T},
             τ::T, step_size::T) where {T, nx, nu, nh, ng}
     μ = data.μ
-    control_limits = ocp.control_limits
+    control_limits_by_stage = ocp.control_limits
     inequalities = ocp.inequality_constraints
-    slack_bounds = inequalities.bounds
+    slack_bounds_by_stage = ocp.inequality_bounds
     objective_scale = solver.scaling.objective
     parameters = ocp.parameters
 
@@ -68,6 +68,8 @@ function rollout!(solver::Solver{T, nx, nu, nh, ng},
 
     x = solver.nominal[1].x
     for t = eachindex(solver.nominal)
+        control_limits = control_limits_by_stage[t]
+        slack_bounds = slack_bounds_by_stage[t]
 
         x̄ = solver.nominal[t].x
         ū = solver.nominal[t].u
@@ -122,7 +124,7 @@ function rollout!(solver::Solver{T, nx, nu, nh, ng},
         # evaluate constraints and violation
         if nh > 0
             h = trial_component_value(ocp.equality_constraints, x, u,
-                parameters.equality_constraints)
+                parameters.equality_constraints[t])
             if isnothing(h) || !all(isfinite, h)
                 data.status = 5
                 return
@@ -132,7 +134,7 @@ function rollout!(solver::Solver{T, nx, nu, nh, ng},
         end
         if ng > 0
             inequality_value = trial_component_value(inequalities, x, u,
-                parameters.inequality_constraints)
+                parameters.inequality_constraints[t])
             if isnothing(inequality_value)
                 data.status = 5
                 return
@@ -201,14 +203,14 @@ function rollout!(solver::Solver{T, nx, nu, nh, ng},
             data.barrier_lagrangian_next -= μ * dot(log.(su), slack_bounds.masku)
         end
         stage_value = trial_component_value(ocp.stage_objective, x, u,
-            parameters.stage_objective)
+            parameters.stage_objective[t])
         if isnothing(stage_value) || !isfinite(stage_value)
             data.status = 5
             return
         end
         data.barrier_lagrangian_next += objective_scale * stage_value
         next_x = trial_component_value(
-            solver.ocp.dynamics, x, u, parameters.dynamics)
+            solver.ocp.dynamics, x, u, parameters.dynamics[t])
         if isnothing(next_x) || !all(isfinite, next_x)
             data.status = 5
             return

@@ -77,13 +77,7 @@ for seed = 1:n_ocp
 
     xyr_obs = [obs_1, obs_2, obs_3, obs_4]
     inequality_parameters = SVector{npi, T}(vcat(xyr_obs...))
-    empty_parameters = SVector{0, T}()
-    ocp_parameters = OCPParameters(
-        stage_objective=empty_parameters,
-        term_objective=empty_parameters,
-        dynamics=empty_parameters,
-        equality_constraints=empty_parameters,
-        inequality_constraints=inequality_parameters)
+    ocp_parameters = (inequality_constraints=inequality_parameters,)
 
     # ## Control Limits
 

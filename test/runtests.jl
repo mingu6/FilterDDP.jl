@@ -18,6 +18,9 @@ component_first_order_allocations(component, args...) =
 component_value_allocations(component, args...) =
     @allocated FilterDDP.component_value(component, args...)
 
+stage_parameter_allocations(solver, parameters) =
+    @allocated set_parameters!(solver; stage_objective=parameters)
+
 filter_update_allocations(data, options) =
     @allocated FilterDDP.update_filter!(data, options)
 
@@ -161,7 +164,7 @@ end
     ocp = build_ocp(2, stage_objective, terminal_objective, dynamics,
         control_limits)
 
-    @test ocp.control_limits === control_limits
+    @test ocp.control_limits == [control_limits]
     @test ocp.equality_constraints isa FilterDDP.SymbolicsEqualityConstraints{1, 1, 0}
     @test ocp.inequality_constraints isa FilterDDP.SymbolicsInequalityConstraints{Float64, 1, 1, 0}
 
@@ -231,13 +234,13 @@ end
         (x, u, p) -> [p[1] * u[1]], nx, nu,
         @SVector([-Inf]), @SVector([1.0]), npi)
     control_limits = ControlLimits(@SVector([-Inf]), @SVector([Inf]))
-    parameters_1 = OCPParameters(
+    parameters_1 = (
         stage_objective=@SVector([2.0, 3.0]),
         term_objective=@SVector([4.0]),
         dynamics=@SVector([6.0, 7.0]),
         equality_constraints=@SVector([8.0]),
         inequality_constraints=@SVector([9.0]))
-    parameters_2 = OCPParameters(
+    parameters_2 = (
         stage_objective=@SVector([3.0, 4.0]),
         term_objective=@SVector([5.0]),
         dynamics=@SVector([7.0, 8.0]),
@@ -251,7 +254,11 @@ end
     x = @SVector [2.0]
     u = @SVector [1.0]
 
-    @test ocp_1.parameters === parameters_1
+    @test ocp_1.parameters.stage_objective == [parameters_1.stage_objective]
+    @test ocp_1.parameters.term_objective == parameters_1.term_objective
+    @test ocp_1.parameters.dynamics == [parameters_1.dynamics]
+    @test ocp_1.parameters.equality_constraints == [parameters_1.equality_constraints]
+    @test ocp_1.parameters.inequality_constraints == [parameters_1.inequality_constraints]
     @test typeof(ocp_1) === typeof(ocp_2)
     @test ocp_1.stage_objective === ocp_2.stage_objective
     @test FilterDDP.evaluate(stage_objective.l, x, u,
@@ -277,28 +284,150 @@ end
     @test FilterDDP.evaluate(equalities.hxx, x, u,
         parameters_1.equality_constraints, @SVector([2.0])) == @SMatrix [0.0]
 
-    empty_parameters = SVector{0, Float64}()
-    equality_only_parameters = OCPParameters(
+    equality_only_parameters = (
         stage_objective=parameters_1.stage_objective,
         term_objective=parameters_1.term_objective,
         dynamics=parameters_1.dynamics,
-        equality_constraints=parameters_1.equality_constraints,
-        inequality_constraints=empty_parameters)
+        equality_constraints=parameters_1.equality_constraints)
     equality_only_ocp = build_ocp(2, stage_objective, terminal_objective,
         dynamics, equalities, control_limits; parameters=equality_only_parameters)
     @test equality_only_ocp.inequality_constraints isa
         FilterDDP.SymbolicsInequalityConstraints{Float64, 1, 1, 0, 0}
 
-    inequality_only_parameters = OCPParameters(
+    inequality_only_parameters = (
         stage_objective=parameters_1.stage_objective,
         term_objective=parameters_1.term_objective,
         dynamics=parameters_1.dynamics,
-        equality_constraints=empty_parameters,
         inequality_constraints=parameters_1.inequality_constraints)
     inequality_only_ocp = build_ocp(2, stage_objective, terminal_objective,
         dynamics, inequalities, control_limits; parameters=inequality_only_parameters)
     @test inequality_only_ocp.equality_constraints isa
         FilterDDP.SymbolicsEqualityConstraints{1, 1, 0, 0}
+end
+
+@testset "stage-dependent parameters" begin
+    N = 11
+    backend = ForwardDiffBackend()
+    stage_objective = Objective(
+        (x, u, p) -> (x[1] - p[1])^2 + 1.0e-6 * u[1]^2, 1, 1, 1; backend=backend)
+    terminal_objective = TerminalObjective(
+        (x, p) -> (x[1] - p[1])^2, 1, 1; backend=backend)
+    dynamics = Dynamics((x, u, p) -> @SVector([x[1] + p[1] * u[1]]), 1, 1, 1;
+        backend=backend)
+    control_limits = ControlLimits(@SVector([-Inf]), @SVector([Inf]))
+    x1 = @SVector [0.0]
+    controls = [@SVector([0.0]) for _ = 1:N-1]
+    reference = [@SVector([sin(0.5 * t)]) for t = 1:N]
+
+    function solve_tracking(parameters)
+        ocp = build_ocp(N, stage_objective, terminal_objective, dynamics,
+            control_limits; parameters=parameters)
+        solver = Solver(ocp; options=Options{Float64}(verbose=false))
+        solve!(solver, x1, controls)
+        return solver
+    end
+
+    tracking = solve_tracking((stage_objective=reference[1:N-1],
+        term_objective=reference[N], dynamics=@SVector([1.0])))
+    x_tracking, _ = get_trajectory(tracking)
+    @test tracking.data.status == 0
+    @test tracking.ocp.parameters.stage_objective == reference[1:N-1]
+    @test maximum(abs(x_tracking[t][1] - reference[t][1]) for t = 2:N) < 1.0e-3
+
+    constant = solve_tracking((stage_objective=@SVector([0.5]),
+        term_objective=@SVector([0.5]), dynamics=@SVector([2.0])))
+    repeated = solve_tracking((stage_objective=fill(@SVector([0.5]), N - 1),
+        term_objective=[0.5], dynamics=[[2.0] for _ = 1:N-1]))
+    @test get_trajectory(constant) == get_trajectory(repeated)
+
+    shifted_reference = [@SVector([cos(0.5 * t)]) for t = 1:N]
+    shifted = (stage_objective=shifted_reference[1:N-1],
+        term_objective=shifted_reference[N])
+    @test set_parameters!(tracking; shifted...) === tracking
+    solve!(tracking, x1, controls)
+    fresh = solve_tracking((shifted..., dynamics=@SVector([1.0])))
+    @test get_trajectory(tracking) == get_trajectory(fresh)
+
+    stage_reference = reference[1:N-1]
+    stage_parameter_allocations(tracking, stage_reference)
+    @test stage_parameter_allocations(tracking, stage_reference) == 0
+    ocp = tracking.ocp
+    @test_throws DimensionMismatch set_parameters!(ocp;
+        stage_objective=reference[1:N-2])
+    @test_throws DimensionMismatch set_parameters!(ocp;
+        dynamics=@SVector([1.0, 2.0]))
+    @test_throws DimensionMismatch build_ocp(N, stage_objective,
+        terminal_objective, dynamics, control_limits;
+        parameters=(stage_objective=@SVector([0.0]), term_objective=@SVector([0.0])))
+    @test_throws MethodError set_parameters!(ocp; objective=@SVector([0.0]))
+end
+
+@testset "stage-dependent bounds" begin
+    N = 11
+    backend = ForwardDiffBackend()
+    stage_objective = Objective(
+        (x, u) -> (x[1] - 10.0)^2 + 1.0e-6 * u[1]^2, 1, 1; backend=backend)
+    terminal_objective = TerminalObjective(
+        x -> (x[1] - 10.0)^2, 1; backend=backend)
+    dynamics = Dynamics((x, u) -> x + u, 1, 1; backend=backend)
+    inequalities = InequalityConstraints((x, u) -> x + u, 1, 1,
+        @SVector([-Inf]), @SVector([Inf]); backend=backend)
+    x1 = @SVector [0.0]
+    controls = [@SVector([0.0]) for _ = 1:N-1]
+    options = Options{Float64}(verbose=false, optimality_tolerance=1.0e-9)
+
+    function solve_bounded(control_limits; kwargs...)
+        ocp = build_ocp(N, stage_objective, terminal_objective, dynamics,
+            inequalities, control_limits; kwargs...)
+        solver = Solver(ocp; options=options)
+        solve!(solver, x1, controls)
+        return solver
+    end
+
+    limit = t -> t <= 5 ? 0.1 * t : Inf
+    stage_limits = [ControlLimits(@SVector([-limit(t)]), @SVector([limit(t)]))
+        for t = 1:N-1]
+    limited = solve_bounded(stage_limits)
+    x_limited, u_limited = get_trajectory(limited)
+    @test limited.data.status == 0
+    @test FilterDDP.bound_count(limited.ocp) == 10
+    @test maximum(abs(u_limited[t][1] - limit(t)) for t = 1:5) < 1.0e-6
+    @test maximum(abs(x_limited[t][1] - 10.0) for t = 7:N) < 1.0e-4
+
+    upper = t -> 0.5 * t
+    stage_bounds = [BoundConstraints(@SVector([-Inf]), @SVector([upper(t)]))
+        for t = 1:N-1]
+    wide_limits = ControlLimits(@SVector([-Inf]), @SVector([Inf]))
+    bounded = solve_bounded(wide_limits; inequality_bounds=stage_bounds)
+    x_bounded, _ = get_trajectory(bounded)
+    @test bounded.data.status == 0
+    @test FilterDDP.bound_count(bounded.ocp) == N - 1
+    @test maximum(abs(x_bounded[t + 1][1] - upper(t)) for t = 1:N-1) < 1.0e-6
+
+    constant_limits = ControlLimits(@SVector([-0.5]), @SVector([0.5]))
+    constant = solve_bounded(constant_limits)
+    repeated = solve_bounded(fill(constant_limits, N - 1))
+    @test get_trajectory(constant) == get_trajectory(repeated)
+
+    @test set_bounds!(constant; control_limits=stage_limits,
+        inequality_bounds=stage_bounds) === constant
+    solve!(constant, x1, controls)
+    fresh = solve_bounded(stage_limits; inequality_bounds=stage_bounds)
+    @test get_trajectory(constant) == get_trajectory(fresh)
+
+    stage_bound_allocations(solver, bounds) =
+        @allocated set_bounds!(solver; control_limits=bounds)
+    stage_bound_allocations(constant, stage_limits)
+    @test stage_bound_allocations(constant, stage_limits) == 0
+
+    @test_throws DimensionMismatch set_bounds!(constant;
+        control_limits=stage_limits[1:N-2])
+    @test_throws ArgumentError set_bounds!(constant;
+        inequality_bounds=BoundConstraints(@SVector([-1.0, -1.0]), @SVector([1.0, 1.0])))
+    @test_throws DimensionMismatch build_ocp(N, stage_objective,
+        terminal_objective, dynamics, inequalities, wide_limits;
+        inequality_bounds=stage_bounds[1:2])
+    @test_throws MethodError set_bounds!(constant; bounds=stage_bounds)
 end
 
 @testset "ForwardDiff derivative backend" begin

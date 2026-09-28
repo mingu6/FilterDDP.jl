@@ -82,13 +82,7 @@ for seed = 1:n_ocp
 		T(0.5),
 		T(9.81), T(0.0), T(0.0)]
 	acrobot = double_pendulum(dynamics_parameters)
-	empty_parameters = SVector{0, T}()
-	ocp_parameters = OCPParameters(
-		stage_objective=empty_parameters,
-		term_objective=empty_parameters,
-		dynamics=dynamics_parameters,
-		equality_constraints=empty_parameters,
-		inequality_constraints=empty_parameters)
+	ocp_parameters = (dynamics=dynamics_parameters,)
 
 	ocp = build_ocp(N, stage_objective, terminal_objective, dynamics,
 		equalities, control_limits; parameters=ocp_parameters)
