@@ -9,6 +9,7 @@ using StaticArrays
 visualise = false
 verbose = false
 use_control_limits = false
+dynamics_backend = :symbolics  # :symbolics or :forwarddiff
 
 T = Float64
 const Δ = 0.05
@@ -51,7 +52,14 @@ stage_cost = (x, u) ->
 	Δ * (2.0 * dot(u, u) + dot(x - xN, Q * (x - xN)))
 terminal_cost = x -> 1000.0 * dot(x - xN, Q * (x - xN))
 
-dynamics = Dynamics(acrobot_dynamics, nx, nu, npd; backend=ForwardDiffBackend())
+backend = if dynamics_backend == :symbolics
+	SymbolicsBackend()
+elseif dynamics_backend == :forwarddiff
+	ForwardDiffBackend()
+else
+	throw(ArgumentError("dynamics_backend must be :symbolics or :forwarddiff"))
+end
+dynamics = Dynamics(acrobot_dynamics, nx, nu, npd; backend=backend)
 stage_objective = Objective(stage_cost, nx, nu)
 terminal_objective = TerminalObjective(terminal_cost, nx)
 equalities = EqualityConstraints(nx, nu)
