@@ -17,22 +17,22 @@ function build_symbolic_constraint_functions(value, x, u,
 
     if count > 0
         value_func = @RuntimeGeneratedFunction(
-            Symbolics._build_function(Symbolics.JuliaTarget(), value, x, u, inputs...)[1])
+            Symbolics._build_function(Symbolics.JuliaTarget(), value, x, u, inputs...; cse=true)[1])
         value_x_func = @RuntimeGeneratedFunction(
-            Symbolics._build_function(Symbolics.JuliaTarget(), value_x, x, u, inputs...)[1])
+            Symbolics._build_function(Symbolics.JuliaTarget(), value_x, x, u, inputs...; cse=true)[1])
         value_u_func = @RuntimeGeneratedFunction(
-            Symbolics._build_function(Symbolics.JuliaTarget(), value_u, x, u, inputs...)[1])
+            Symbolics._build_function(Symbolics.JuliaTarget(), value_u, x, u, inputs...; cse=true)[1])
 
         multiplier::Vector{Num} = Symbolics.variables(multiplier_name, 1:count)
         value_xx = Symbolics.simplify(Symbolics.hessian(value' * multiplier, x))
         value_ux = Symbolics.simplify(Symbolics.jacobian(value_u' * multiplier, x))
         value_uu = Symbolics.simplify(Symbolics.hessian(value' * multiplier, u))
         value_xx_func = @RuntimeGeneratedFunction(
-            Symbolics._build_function(Symbolics.JuliaTarget(), value_xx, x, u, inputs..., multiplier)[1])
+            Symbolics._build_function(Symbolics.JuliaTarget(), value_xx, x, u, inputs..., multiplier; cse=true)[1])
         value_ux_func = @RuntimeGeneratedFunction(
-            Symbolics._build_function(Symbolics.JuliaTarget(), value_ux, x, u, inputs..., multiplier; skipzeros=false)[1])
+            Symbolics._build_function(Symbolics.JuliaTarget(), value_ux, x, u, inputs..., multiplier; skipzeros=false, cse=true)[1])
         value_uu_func = @RuntimeGeneratedFunction(
-            Symbolics._build_function(Symbolics.JuliaTarget(), value_uu, x, u, inputs..., multiplier; skipzeros=false)[1])
+            Symbolics._build_function(Symbolics.JuliaTarget(), value_uu, x, u, inputs..., multiplier; skipzeros=false, cse=true)[1])
     else
         value_func = nothing
         value_x_func = nothing

@@ -55,17 +55,17 @@ function build_symbolic_objective(::Val{nx}, ::Val{nu}, ::Val{np}, l_, x, u,
     luu = Symbolics.simplify(Symbolics.jacobian(lu, u))
 
     l_func = @RuntimeGeneratedFunction(
-        Symbolics._build_function(Symbolics.JuliaTarget(), [l_], x, u, inputs...; skipzeros=false)[1])
+        Symbolics._build_function(Symbolics.JuliaTarget(), [l_], x, u, inputs...; skipzeros=false, cse=true)[1])
     lx_func = @RuntimeGeneratedFunction(
-        Symbolics._build_function(Symbolics.JuliaTarget(), lx, x, u, inputs...; skipzeros=false)[1])
+        Symbolics._build_function(Symbolics.JuliaTarget(), lx, x, u, inputs...; skipzeros=false, cse=true)[1])
     lu_func = @RuntimeGeneratedFunction(
-        Symbolics._build_function(Symbolics.JuliaTarget(), lu, x, u, inputs...; skipzeros=false)[1])
+        Symbolics._build_function(Symbolics.JuliaTarget(), lu, x, u, inputs...; skipzeros=false, cse=true)[1])
     lxx_func = @RuntimeGeneratedFunction(
-        Symbolics._build_function(Symbolics.JuliaTarget(), lxx, x, u, inputs...; skipzeros=false)[1])
+        Symbolics._build_function(Symbolics.JuliaTarget(), lxx, x, u, inputs...; skipzeros=false, cse=true)[1])
     lux_func = @RuntimeGeneratedFunction(
-        Symbolics._build_function(Symbolics.JuliaTarget(), lux, x, u, inputs...; skipzeros=false)[1])
+        Symbolics._build_function(Symbolics.JuliaTarget(), lux, x, u, inputs...; skipzeros=false, cse=true)[1])
     luu_func = @RuntimeGeneratedFunction(
-        Symbolics._build_function(Symbolics.JuliaTarget(), luu, x, u, inputs...; skipzeros=false)[1])
+        Symbolics._build_function(Symbolics.JuliaTarget(), luu, x, u, inputs...; skipzeros=false, cse=true)[1])
 
     return SymbolicsStageObjective{nx, nu, np, typeof(l_func), typeof(lx_func), typeof(lu_func),
                      typeof(lxx_func), typeof(lux_func), typeof(luu_func)}(
@@ -101,11 +101,11 @@ function build_symbolic_terminal_objective(::Val{nx}, ::Val{np}, l_, x,
     lxx = Symbolics.simplify(Symbolics.jacobian(lx, x))
 
     l_func = @RuntimeGeneratedFunction(
-        Symbolics._build_function(Symbolics.JuliaTarget(), [l_], x, inputs...; skipzeros=false)[1])
+        Symbolics._build_function(Symbolics.JuliaTarget(), [l_], x, inputs...; skipzeros=false, cse=true)[1])
     lx_func = @RuntimeGeneratedFunction(
-        Symbolics._build_function(Symbolics.JuliaTarget(), lx, x, inputs...; skipzeros=false)[1])
+        Symbolics._build_function(Symbolics.JuliaTarget(), lx, x, inputs...; skipzeros=false, cse=true)[1])
     lxx_func = @RuntimeGeneratedFunction(
-        Symbolics._build_function(Symbolics.JuliaTarget(), lxx, x, inputs...; skipzeros=false)[1])
+        Symbolics._build_function(Symbolics.JuliaTarget(), lxx, x, inputs...; skipzeros=false, cse=true)[1])
 
     return SymbolicsTerminalObjective{nx, np, typeof(l_func), typeof(lx_func), typeof(lxx_func)}(
         l_func, lx_func, lxx_func)

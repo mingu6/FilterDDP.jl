@@ -36,21 +36,21 @@ function build_symbolic_dynamics(::Val{nx}, ::Val{nu}, ::Val{np}, y, x, u,
     fx = Symbolics.simplify(Symbolics.jacobian(y, x))
     fu = Symbolics.simplify(Symbolics.jacobian(y, u))
     f_func = @RuntimeGeneratedFunction(
-        Symbolics.build_function(y, x, u, inputs...)[1])
+        Symbolics.build_function(y, x, u, inputs...; cse=true)[1])
     fx_func = @RuntimeGeneratedFunction(
-        Symbolics._build_function(Symbolics.JuliaTarget(), fx, x, u, inputs...; skipzeros=false)[1])
+        Symbolics._build_function(Symbolics.JuliaTarget(), fx, x, u, inputs...; skipzeros=false, cse=true)[1])
     fu_func = @RuntimeGeneratedFunction(
-        Symbolics._build_function(Symbolics.JuliaTarget(), fu, x, u, inputs...; skipzeros=false)[1])
+        Symbolics._build_function(Symbolics.JuliaTarget(), fu, x, u, inputs...; skipzeros=false, cse=true)[1])
 
     fxx = Symbolics.simplify(Symbolics.hessian(λ' * y, x))
     fux = Symbolics.simplify(Symbolics.jacobian(Symbolics.gradient(λ' * y, u), x))
     fuu = Symbolics.simplify(Symbolics.hessian(λ' * y, u))
     fxx_func = @RuntimeGeneratedFunction(
-        Symbolics._build_function(Symbolics.JuliaTarget(), fxx, x, u, inputs..., λ; skipzeros=false)[1])
+        Symbolics._build_function(Symbolics.JuliaTarget(), fxx, x, u, inputs..., λ; skipzeros=false, cse=true)[1])
     fux_func = @RuntimeGeneratedFunction(
-        Symbolics._build_function(Symbolics.JuliaTarget(), fux, x, u, inputs..., λ; skipzeros=false)[1])
+        Symbolics._build_function(Symbolics.JuliaTarget(), fux, x, u, inputs..., λ; skipzeros=false, cse=true)[1])
     fuu_func = @RuntimeGeneratedFunction(
-        Symbolics._build_function(Symbolics.JuliaTarget(), fuu, x, u, inputs..., λ; skipzeros=false)[1])
+        Symbolics._build_function(Symbolics.JuliaTarget(), fuu, x, u, inputs..., λ; skipzeros=false, cse=true)[1])
 
     return SymbolicsDynamics{nx, nu, np, typeof(f_func), typeof(fx_func), typeof(fu_func),
                     typeof(fxx_func), typeof(fux_func), typeof(fuu_func)}(
