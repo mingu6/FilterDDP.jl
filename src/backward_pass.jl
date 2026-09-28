@@ -15,7 +15,7 @@ end
 function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
             ocp::OCP{T, nx, nu, nh, ng},
             traj::Vector{TrajectoryElement{T, nx, nu, nh, ng}},
-            data::SolverData{T}, options::Options{T}, verbose::Bool=false
+            data::SolverData{T}, options::Options{T}
             ) where {T, nx, nu, nh, ng, nux, nhx, ngx}
     reg::T = 0.0
     μ = data.μ
@@ -376,5 +376,5 @@ function backward_pass!(solver::Solver{T, nx, nu, nh, ng, nux, nhx, ngx},
         data.status == 0 && break
     end
     data.reg_last = reg
-    data.status != 0 && (verbose && (@warn "Backward pass failure, unable to find an iteration matrix with correct inertia."))
+    data.status != 0 && options.verbose && warn_backward_pass_failure()
 end

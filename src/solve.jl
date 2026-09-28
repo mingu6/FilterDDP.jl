@@ -24,7 +24,7 @@ function solve!(solver::Solver)
         ocp.inequality_constraints.bounds.nu) * nstages
 
     while data.k < options.max_iterations
-        backward_pass!(solver, ocp, solver.nominal, data, options, options.verbose)
+        backward_pass!(solver, ocp, solver.nominal, data, options)
         data.status != 0 && break
 
         # set minimum constraint violation required to trigger switching condition
@@ -47,7 +47,7 @@ function solve!(solver::Solver)
         
         options.verbose && iteration_status(data, options)
 
-        forward_pass!(solver, ocp, data, options, options.verbose)
+        forward_pass!(solver, ocp, data, options)
         data.status != 0 && break
         
         update_nominal_trajectory!(solver)

@@ -1,6 +1,6 @@
 function forward_pass!(solver::Solver{T, nx, nu, nh, ng},
             ocp::OCP{T, nx, nu, nh, ng}, data::SolverData{T},
-            options::Options{T}, verbose::Bool=false) where {T, nx, nu, nh, ng}
+            options::Options{T}) where {T, nx, nu, nh, ng}
     data.l = 0  # line search iteration counter
     data.status = 0
     data.step_size = T(1.0)
@@ -38,7 +38,7 @@ function forward_pass!(solver::Solver{T, nx, nu, nh, ng},
         break
     end
     data.step_size < eps(T) && (data.status = 7)
-    data.status != 0 && (verbose && (@warn "Line search failed to find a suitable iterate"))
+    data.status != 0 && options.verbose && warn_line_search_failure()
 end
 
 @inline function trial_component_value(component, args...)

@@ -1,4 +1,4 @@
-function solver_info()
+@noinline function solver_info()
     println(crayon"bold red","   
  _____ _ _ _            ____  ____  ____  
 |  ___(_) | |_ ___ _ __|  _ \\|  _ \\|  _ \\ 
@@ -9,7 +9,7 @@ function solver_info()
     print(crayon"reset")
 end
 
-function iteration_status(
+@noinline function iteration_status(
     data::SolverData,
     options::Options
     )
@@ -27,7 +27,7 @@ function iteration_status(
         data.step_size, data.l)
 end
 
-function on_exit(data::SolverData)
+@noinline function on_exit(data::SolverData)
     println()
     println()
     if data.status == 0
@@ -43,3 +43,9 @@ function on_exit(data::SolverData)
     end
     println()
 end
+
+@noinline warn_backward_pass_failure() = @warn(
+    "Backward pass failure, unable to find an iteration matrix with correct inertia.")
+
+@noinline warn_line_search_failure() = @warn(
+    "Line search failed to find a suitable iterate")
