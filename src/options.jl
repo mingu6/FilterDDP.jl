@@ -3,8 +3,8 @@ Base.@kwdef mutable struct Options{T}
     optimality_tolerance::T = 1.0e-8
     max_iterations::Int = 1000
     reset_cache::Bool = true
-    verbose = false
-    print_frequency = 10
+    verbose::Bool = false
+    print_frequency::Int = 10
     
     μ_init::T = 1.0                # multiplier on barrier parameter initialisation
     ineq_dual_init::T = 1.0        # dual variable initialisation value
